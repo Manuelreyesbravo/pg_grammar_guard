@@ -1,0 +1,221 @@
+-- Deterministic: no timestamps, no oids, no catalog-wide scans. The temporary
+-- schema is created here so the catalog sources have something they own to read
+-- -- reading the whole cluster would make the expected output depend on what
+-- else happens to be installed.
+CREATE EXTENSION pg_grammar_guard;
+SET search_path = grammar_guard, public;
+CREATE SCHEMA gg_test;
+CREATE TABLE gg_test.clientes (id int, rut text, nombre text);
+CREATE TABLE gg_test.facturas (id int, cliente_id int, monto numeric);
+CREATE VIEW  gg_test.vigentes AS SELECT * FROM gg_test.facturas;
+CREATE TYPE  gg_test.estado AS ENUM ('abierta', 'pagada', 'anulada');
+-- ---------------------------------------------------------------- sources --
+SELECT catalog_tables(ARRAY['gg_test']);
+                    catalog_tables                    
+------------------------------------------------------
+ {gg_test.clientes,gg_test.facturas,gg_test.vigentes}
+(1 row)
+
+SELECT catalog_columns('gg_test.clientes');
+ catalog_columns 
+-----------------
+ {id,rut,nombre}
+(1 row)
+
+SELECT catalog_enum('gg_test.estado');
+       catalog_enum       
+--------------------------
+ {abierta,pagada,anulada}
+(1 row)
+
+-- A dropped column must disappear from the columns and therefore from the
+-- grammar. This is the whole premise: the grammar tracks the catalog.
+ALTER TABLE gg_test.clientes DROP COLUMN rut;
+SELECT catalog_columns('gg_test.clientes');
+ catalog_columns 
+-----------------
+ {id,nombre}
+(1 row)
+
+-- ------------------------------------------------------------- generation --
+SELECT grammar_for_json(ARRAY[
+    ROW('table',  'enum', catalog_tables(ARRAY['gg_test']), true),
+    ROW('column', 'enum', catalog_columns('gg_test.facturas'), true),
+    ROW('limit',  'integer', NULL, false)
+]::grammar_field[]);
+                                                                grammar_for_json                                                                
+------------------------------------------------------------------------------------------------------------------------------------------------
+ root ::= "{" ws "\"table\"" ws ":" ws f1-table ws "," ws "\"column\"" ws ":" ws f2-column ws ( "," ws "\"limit\"" ws ":" ws f3-limit ws )? "}"+
+ f1-table ::= "\"gg_test.clientes\"" | "\"gg_test.facturas\"" | "\"gg_test.vigentes\""                                                         +
+ f2-column ::= "\"id\"" | "\"cliente_id\"" | "\"monto\""                                                                                       +
+ f3-limit ::= integer                                                                                                                          +
+ string ::= "\"" char* "\""                                                                                                                    +
+ char ::= [^"\\\x00-\x1F] | "\\" (["\\/bfnrt] | "u" hex hex hex hex)                                                                           +
+ hex ::= [0-9a-fA-F]                                                                                                                           +
+ integer ::= "-"? ("0" | [1-9] [0-9]*)                                                                                                         +
+ number ::= integer ("." [0-9]+)? ([eE] [-+]? [0-9]+)?                                                                                         +
+ boolean ::= "true" | "false"                                                                                                                  +
+ ws ::= [ \t\n]*                                                                                                                               +
+ 
+(1 row)
+
+-- Same fields, the other dialect.
+SELECT grammar_for_json(ARRAY[
+    ROW('table',  'enum', catalog_tables(ARRAY['gg_test']), true),
+    ROW('limit',  'integer', NULL, false)
+]::grammar_field[], 'json_schema');
+          grammar_for_json           
+-------------------------------------
+ {                                  +
+     "type": "object",              +
+     "required": [                  +
+         "table"                    +
+     ],                             +
+     "properties": {                +
+         "limit": {                 +
+             "type": "integer"      +
+         },                         +
+         "table": {                 +
+             "enum": [              +
+                 "gg_test.clientes",+
+                 "gg_test.facturas",+
+                 "gg_test.vigentes" +
+             ],                     +
+             "type": "string"       +
+         }                          +
+     },                             +
+     "additionalProperties": false  +
+ }
+(1 row)
+
+-- ---------------------------------------------------------------- quoting --
+-- A value carrying a quote, a backslash and a newline. Both quoting levels have
+-- to survive: the JSON one and the GBNF one. Getting the order wrong here does
+-- not raise an error, it produces a grammar that permits a different language.
+SELECT grammar_for_json(ARRAY[
+    ROW('v', 'enum', ARRAY['plain', 'has"quote', 'has\back', E'has\nnewline'], true)
+]::grammar_field[]);
+                                  grammar_for_json                                   
+-------------------------------------------------------------------------------------
+ root ::= "{" ws "\"v\"" ws ":" ws f1-v ws "}"                                      +
+ f1-v ::= "\"plain\"" | "\"has\\\"quote\"" | "\"has\\\\back\"" | "\"has\\nnewline\""+
+ ws ::= [ \t\n]*                                                                    +
+ 
+(1 row)
+
+-- Two field names that sanitise to the same rule name. Without the ordinal they
+-- would collide and one field would silently get the other's permitted values.
+SELECT grammar_for_json(ARRAY[
+    ROW('a.b', 'enum', ARRAY['x'], true),
+    ROW('a-b', 'enum', ARRAY['y'], true)
+]::grammar_field[]);
+                                    grammar_for_json                                    
+----------------------------------------------------------------------------------------
+ root ::= "{" ws "\"a.b\"" ws ":" ws f1-a-b ws "," ws "\"a-b\"" ws ":" ws f2-a-b ws "}"+
+ f1-a-b ::= "\"x\""                                                                    +
+ f2-a-b ::= "\"y\""                                                                    +
+ ws ::= [ \t\n]*                                                                       +
+ 
+(1 row)
+
+-- --------------------------------------------------------------- refusals --
+-- Each of these is refused rather than compiled into something subtly wrong.
+SELECT grammar_for_json(ARRAY[ROW('v', 'enum', '{}'::text[], true)]::grammar_field[]);
+ERROR:  field v: enum with no values
+HINT:  The query that fills this enum returned no rows. An empty enum cannot be satisfied.
+CONTEXT:  PL/pgSQL function grammar_for_json(grammar_field[],text) line 36 at RAISE
+SELECT grammar_for_json(ARRAY[ROW('v', 'enum', ARRAY['x'], false)]::grammar_field[]);
+ERROR:  every field is optional
+HINT:  GBNF needs at least one required field to anchor the commas. Mark the field you always want as required.
+CONTEXT:  PL/pgSQL function grammar_for_json(grammar_field[],text) line 52 at RAISE
+SELECT grammar_for_json(ARRAY[ROW('v', 'colour', NULL, true)]::grammar_field[]);
+ERROR:  field v: unknown kind colour
+CONTEXT:  PL/pgSQL function grammar_for_json(grammar_field[],text) line 30 at RAISE
+SELECT grammar_for_json(ARRAY[ROW('v', 'enum', ARRAY['x'], true)]::grammar_field[], 'lark');
+ERROR:  unknown dialect: lark
+HINT:  Supported dialects are gbnf (llama.cpp) and json_schema.
+CONTEXT:  PL/pgSQL function grammar_for_json(grammar_field[],text) line 21 at RAISE
+SELECT grammar_for_json('{}'::grammar_field[]);
+ERROR:  no fields given
+HINT:  grammar_for_json needs at least one field to constrain.
+CONTEXT:  PL/pgSQL function grammar_for_json(grammar_field[],text) line 16 at RAISE
+-- ------------------------------------------------------------ fingerprint --
+-- Over the fields, not over the emitted text: the two dialects of one world
+-- must fingerprint the same, or approving one would read as drift in the other.
+SELECT grammar_fingerprint(ARRAY[ROW('t', 'enum', ARRAY['a', 'b'], true)]::grammar_field[])
+     = grammar_fingerprint(ARRAY[ROW('t', 'enum', ARRAY['a', 'b'], true)]::grammar_field[])
+       AS stable;
+ stable 
+--------
+ t
+(1 row)
+
+-- Order of enum values is part of what the catalog said, so it changes it.
+SELECT grammar_fingerprint(ARRAY[ROW('t', 'enum', ARRAY['a', 'b'], true)]::grammar_field[])
+    <> grammar_fingerprint(ARRAY[ROW('t', 'enum', ARRAY['b', 'a'], true)]::grammar_field[])
+       AS order_matters;
+ order_matters 
+---------------
+ t
+(1 row)
+
+-- ------------------------------------------------------------------ guard --
+-- Never approved is its own severity, not drift.
+SELECT name, severity FROM check_grammar('answer',
+    ARRAY[ROW('table', 'enum', catalog_tables(ARRAY['gg_test']), true)]::grammar_field[]);
+  name  |    severity    
+--------+----------------
+ answer | never_approved
+(1 row)
+
+SELECT approve('answer',
+    ARRAY[ROW('table', 'enum', catalog_tables(ARRAY['gg_test']), true)]::grammar_field[],
+    'gbnf', 'test') IS NOT NULL AS approved;
+ approved 
+----------
+ t
+(1 row)
+
+-- Approved and unchanged: silent. This is the half a monitor gets wrong.
+SELECT count(*) AS breaks FROM check_grammar('answer',
+    ARRAY[ROW('table', 'enum', catalog_tables(ARRAY['gg_test']), true)]::grammar_field[]);
+ breaks 
+--------
+      0
+(1 row)
+
+-- The world moves.
+CREATE TABLE gg_test.pagos (id int);
+SELECT name, severity, (approved <> current) AS fingerprint_moved
+  FROM check_grammar('answer',
+    ARRAY[ROW('table', 'enum', catalog_tables(ARRAY['gg_test']), true)]::grammar_field[]);
+  name  | severity | fingerprint_moved 
+--------+----------+-------------------
+ answer | drift    | t
+(1 row)
+
+-- And re-approving makes it silent again, which is what makes the check usable
+-- twice: a monitor that cannot be acknowledged gets ignored.
+SELECT approve('answer',
+    ARRAY[ROW('table', 'enum', catalog_tables(ARRAY['gg_test']), true)]::grammar_field[])
+    IS NOT NULL AS reapproved;
+ reapproved 
+------------
+ t
+(1 row)
+
+SELECT count(*) AS breaks FROM check_grammar('answer',
+    ARRAY[ROW('table', 'enum', catalog_tables(ARRAY['gg_test']), true)]::grammar_field[]);
+ breaks 
+--------
+      0
+(1 row)
+
+DROP SCHEMA gg_test CASCADE;
+NOTICE:  drop cascades to 5 other objects
+DETAIL:  drop cascades to table gg_test.clientes
+drop cascades to table gg_test.facturas
+drop cascades to view gg_test.vigentes
+drop cascades to type gg_test.estado
+drop cascades to table gg_test.pagos
+DROP EXTENSION pg_grammar_guard CASCADE;
