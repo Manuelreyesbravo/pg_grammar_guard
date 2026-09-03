@@ -1,0 +1,9 @@
+# pg_grammar_guard extension
+comment = 'Compile a token-level grammar from the live catalog, and watch it for drift'
+default_version = '0.1.0'
+relocatable = false
+schema = grammar_guard
+# No requires and no shared library: it reads the system catalogs and returns
+# text. That is deliberate -- the database that most needs a grammar built from
+# its real schema is usually the one where installing a C extension is the
+# hardest thing to get approved.
