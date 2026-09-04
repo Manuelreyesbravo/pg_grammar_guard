@@ -2,7 +2,7 @@
    "name": "pg_grammar_guard",
    "abstract": "Compile a token-level grammar from your live catalog, and watch it for drift",
    "description": "Everyone believes structured output stops a language model from inventing things about their database. It does not. A JSON Schema guarantees the JSON parses and that a field is a string; it cannot guarantee that the string is a column that exists, because a schema document is written once and the catalog changes on every migration. pg_grammar_guard compiles a GBNF grammar from names read out of the catalog at generation time, so a constrained model is unable to emit a table, a column or a value that does not exist -- not corrected after the fact, unable. The distinction it is built on is that a grammar constrains form, and in the general case form is not truth, but for identifiers form IS truth, because the set of valid names is finite and only PostgreSQL knows it right now. The second half is the guard: a grammar generated last month against a schema migrated last week still constrains, still looks like it is protecting you, and what it permits is no longer your database -- it quietly allows a dropped column and quietly forbids a new one, with no error and no log line. Approve a grammar once and check_grammar reports when it drifted, keeping never_approved as its own severity rather than folding it into drift. It does not make answers correct: a model constrained to your ten real tables will still pick the wrong one of the ten. Pure SQL, no shared library and no dependencies, reading only the system catalogs.",
-   "version": "0.2.0",
+   "version": "0.3.0",
    "maintainer": [
       "Manuel Reyes <manuelreyesbravo@gmail.com>"
    ],
@@ -10,15 +10,16 @@
    "provides": {
       "pg_grammar_guard": {
          "abstract": "Generate a grammar from the live catalog and detect when it drifts",
-         "file": "pg_grammar_guard--0.2.0.sql",
+         "file": "pg_grammar_guard--0.3.0.sql",
          "docfile": "README.md",
-         "version": "0.2.0"
+         "version": "0.3.0"
       }
    },
    "prereqs": {
       "runtime": {
          "requires": {
-            "PostgreSQL": "13.0.0"
+            "PostgreSQL": "13.0.0",
+            "pg_living_assertions": "0.1.0"
          }
       }
    },

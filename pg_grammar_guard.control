@@ -1,9 +1,14 @@
 # pg_grammar_guard extension
 comment = 'Compile a token-level grammar from the live catalog, and watch it for drift'
-default_version = '0.2.0'
+default_version = '0.3.0'
 relocatable = false
 schema = grammar_guard
-# No requires and no shared library: it reads the system catalogs and returns
-# text. That is deliberate -- the database that most needs a grammar built from
-# its real schema is usually the one where installing a C extension is the
-# hardest thing to get approved.
+# The guard half lives in pg_living_assertions since 0.3.0: approving a
+# baseline, detecting drift, dating the last check and telling "changed" from
+# "nobody ever approved it" are not grammar problems. Four extensions had
+# solved them four times.
+requires = 'pg_living_assertions'
+# No shared library: it reads the system catalogs and returns text. That is
+# deliberate -- the database that most needs a grammar built from its real
+# schema is usually the one where installing a C extension is hardest to get
+# approved.

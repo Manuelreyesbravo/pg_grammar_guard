@@ -142,23 +142,46 @@ constrains. It still looks like it is protecting you. And what it permits is no
 longer your database — it quietly allows a dropped column and quietly forbids a
 new one. No error, no log line.
 
+Since **0.3.0** this half is not implemented here. It is
+[`pg_living_assertions`](https://pgxn.org/dist/pg_living_assertions/), which
+this extension requires.
+
 ```sql
--- once, when you are happy with it
-SELECT grammar_guard.approve('answer_v1', my_fields, 'gbnf', 'shipped 2026-09-03');
+-- once, when you are happy with it. Note it takes the QUERY, not the spec.
+SELECT grammar_guard.watch('answer_v1',
+    $$select jsonb_build_array(grammar_guard.catalog_correlated(
+               ARRAY['public.invoices', 'public.customers']))$$,
+    'shipped 2026-09-03');
 
 -- in CI, or from a monitor
-SELECT * FROM grammar_guard.check_grammar('answer_v1', my_fields);
-```
-```
-    name    |                    detail                     | severity
-------------+-----------------------------------------------+----------
- answer_v1  | the approved grammar no longer describes the…  | drift
+SELECT grammar_guard.check_grammar('answer_v1');   -- holds | broken | erroring | …
+SELECT * FROM living_assertions.status;            -- with the age of each verdict
 ```
 
-An empty result means the grammar you approved still matches the world.
-`never_approved` is reported as its own severity and never as `drift`: a grammar
-nobody approved is not one that changed, and collapsing the two is how a monitor
-starts reporting something it cannot know.
+**Taking the query rather than the spec is the point, and it fixes a real
+defect.** Up to 0.2.0 the call was `check_grammar(name, fields)` -- the *caller*
+brought the world with them. Hand it a spec built from a stale variable and it
+compared your baseline against something that was not your catalog and reported
+no drift, cheerfully. Storing the query means the check rebuilds the grammar
+from the live catalog every time it runs, so a cron job, a deploy gate, or
+somebody who was not there when it was approved all get a real answer.
+
+`never_approved` has not been lost: it is `living_assertions.state()` answering
+`unregistered`, alongside `unchecked` (declared but never run), `unknown` and
+`erroring`. Four extensions had each invented their own word for that same
+distinction; it is now solved once. And every verdict is reported with **how old
+it is** -- a stale `holds` reads exactly like a fresh one and means something
+else entirely.
+
+### Upgrading from 0.2.0
+
+`ALTER EXTENSION pg_grammar_guard UPDATE TO '0.3.0'` **warns** if you had
+baselines, and it cannot port them: 0.2.0 stored a fingerprint and never the
+query that rebuilds the spec, so nothing can re-check them. They are kept in
+`grammar_guard.baselines_from_0_2_0` -- the only record of what you had approved
+-- and each needs `watch()` naming its query again. An upgrade that left you
+silently unwatched would be this extension's own subject matter happening to its
+users.
 
 ## Correlation — the column depends on the table
 
