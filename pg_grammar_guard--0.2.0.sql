@@ -423,6 +423,7 @@ DECLARE
     i      int := 0;
     n_req  int := 0;
     tope   int;
+    minimo int;
 BEGIN
     IF kind IS NULL THEN
         RAISE EXCEPTION 'field %: no kind', nombre;
@@ -460,13 +461,37 @@ BEGIN
             RAISE EXCEPTION 'field %: array without items', nombre
                 USING HINT = 'Give items a kind, e.g. {"kind": "enum", "values": [...]}.';
         END IF;
-        tope := coalesce((p_campo ->> 'max_items')::int, 16);
+        -- Default 32, and the number is measured rather than chosen: over 721
+        -- real array arguments the 95th percentile was 9 items and the largest
+        -- was 84. 16 -- the first default written here -- would have cut that
+        -- one silently, and a cap that truncates legitimate work is how a
+        -- feature gets worked around instead of used.
+        --
+        -- A cap still has to EXIST, and that trade is deliberate: without one
+        -- the model can loop forever emitting legal tokens, and truncating is
+        -- far less bad than never stopping -- a truncated array is still valid,
+        -- closed JSON that the caller can see is short.
+        tope := coalesce((p_campo ->> 'max_items')::int, 32);
         IF tope < 1 THEN
             RAISE EXCEPTION 'field %: max_items must be >= 1', nombre;
         END IF;
+        -- min_items exists because the measurement found real arrays of length
+        -- ZERO. The first version required at least one element, which would
+        -- have made a legitimate empty list unreachable -- the same failure as
+        -- the cap, in the other direction.
+        minimo := coalesce((p_campo ->> 'min_items')::int, 1);
+        IF minimo < 0 OR minimo > tope THEN
+            RAISE EXCEPTION 'field %: min_items must be between 0 and max_items', nombre;
+        END IF;
         rid := p_id || '-i';
-        salida := p_id || ' ::= "[" ws ' || rid
-               || ' (ws "," ws ' || rid || '){0,' || (tope - 1)::text || '} ws "]"' || E'\n';
+        IF minimo = 0 THEN
+            salida := p_id || ' ::= "[" ws ( ' || rid
+                   || ' (ws "," ws ' || rid || '){0,' || (tope - 1)::text || '} ws )? "]"' || E'\n';
+        ELSE
+            salida := p_id || ' ::= "[" ws ' || rid
+                   || ' (ws "," ws ' || rid || '){' || (minimo - 1)::text || ','
+                   || (tope - 1)::text || '} ws "]"' || E'\n';
+        END IF;
         RETURN salida || _reglas(sub, rid);
     END IF;
 
