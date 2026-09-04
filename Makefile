@@ -5,7 +5,9 @@ EXTENSION    = pg_grammar_guard
 # mitad guard existe para conservar.
 DATA         = pg_grammar_guard--0.1.0.sql \
                pg_grammar_guard--0.2.0.sql \
-               pg_grammar_guard--0.1.0--0.2.0.sql
+               pg_grammar_guard--0.3.0.sql \
+               pg_grammar_guard--0.1.0--0.2.0.sql \
+               pg_grammar_guard--0.2.0--0.3.0.sql
 PG_CONFIG   ?= pg_config
 
 # One installcheck, no dependencies -- the same lesson pg_promise_guard took

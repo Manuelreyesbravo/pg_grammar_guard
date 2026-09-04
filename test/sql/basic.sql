@@ -3,7 +3,14 @@
 -- -- reading the whole cluster would make the expected output depend on what
 -- else happens to be installed.
 
-CREATE EXTENSION pg_grammar_guard;
+-- terse: the default DETAIL prints failing rows carrying clock_timestamp and
+-- current_user, and CONTEXT prints plpgsql line numbers. Both would make the
+-- expected output depend on the machine.
+\set VERBOSITY terse
+
+-- CASCADE because 0.3.0 requires pg_living_assertions: the guard half lives
+-- there now.
+CREATE EXTENSION pg_grammar_guard CASCADE;
 SET search_path = grammar_guard, public;
 
 CREATE SCHEMA gg_test;
@@ -71,33 +78,64 @@ SELECT grammar_fingerprint(ARRAY[ROW('t', 'enum', ARRAY['a', 'b'], true)]::gramm
        AS order_matters;
 
 -- ------------------------------------------------------------------ guard --
--- Never approved is its own severity, not drift.
-SELECT name, severity FROM check_grammar('answer',
-    ARRAY[ROW('table', 'enum', catalog_tables(ARRAY['gg_test']), true)]::grammar_field[]);
+-- The guard half is pg_living_assertions since 0.3.0. What is under test here
+-- is the BEHAVIOUR, and it is unchanged: what moved is where it lives.
+--
+-- Never approved is still its own answer and still not drift. It is simply no
+-- longer a severity this extension had to invent for itself -- and the registry
+-- says `unregistered` rather than returning an empty result, because empty
+-- reads as a clean bill of health.
+SELECT living_assertions.state('grammar:answer') AS never_approved;
 
-SELECT approve('answer',
-    ARRAY[ROW('table', 'enum', catalog_tables(ARRAY['gg_test']), true)]::grammar_field[],
-    'gbnf', 'test') IS NOT NULL AS approved;
+-- watch() takes the QUERY that rebuilds the spec, not the spec. This is the
+-- defect the move exposed: check_grammar(name, fields) let the CALLER bring the
+-- world, so a stale variable compared the baseline against something that was
+-- not the catalog and reported no drift.
+SELECT watch('answer',
+             $q$select jsonb_build_array(jsonb_build_object(
+                    'name', 'table', 'kind', 'enum', 'required', true,
+                    'values', to_jsonb(grammar_guard.catalog_tables(ARRAY['gg_test']))))$q$,
+             'the tables a question may name') > 0 AS watched;
 
--- Approved and unchanged: silent. This is the half a monitor gets wrong.
-SELECT count(*) AS breaks FROM check_grammar('answer',
-    ARRAY[ROW('table', 'enum', catalog_tables(ARRAY['gg_test']), true)]::grammar_field[]);
+-- Approved and unchanged: holds. This is the half a monitor gets wrong.
+SELECT check_grammar('answer') AS unchanged;
 
--- The world moves.
+-- The world moves. Nobody re-supplies the spec: the stored check rebuilds it
+-- from the catalog, which is what makes this runnable by a cron job or a deploy
+-- gate instead of only by whoever approved it.
 CREATE TABLE gg_test.pagos (id int);
 
-SELECT name, severity, (approved <> current) AS fingerprint_moved
-  FROM check_grammar('answer',
-    ARRAY[ROW('table', 'enum', catalog_tables(ARRAY['gg_test']), true)]::grammar_field[]);
+SELECT check_grammar('answer') AS after_the_world_moved;
 
--- And re-approving makes it silent again, which is what makes the check usable
--- twice: a monitor that cannot be acknowledged gets ignored.
-SELECT approve('answer',
-    ARRAY[ROW('table', 'enum', catalog_tables(ARRAY['gg_test']), true)]::grammar_field[])
-    IS NOT NULL AS reapproved;
+-- And the verdict never travels without its age -- the whole thesis of the
+-- piece. An old `holds` reads exactly like a fresh one and means something else.
+SELECT name, state, age IS NOT NULL AS carries_its_age
+  FROM living_assertions.status WHERE name = 'grammar:answer';
 
-SELECT count(*) AS breaks FROM check_grammar('answer',
-    ARRAY[ROW('table', 'enum', catalog_tables(ARRAY['gg_test']), true)]::grammar_field[]);
+-- Re-approving makes it quiet again, which is what makes the check usable
+-- twice: a monitor that cannot be acknowledged gets ignored. Superseding costs
+-- writing down why, and it retires the previous one in the same statement.
+SELECT living_assertions.declare(
+         'grammar:answer',
+         'the approved grammar still describes the live catalog',
+         format($f$select grammar_guard.grammar_fingerprint((%s)::jsonb) = %L as holds$f$,
+                $q$select jsonb_build_array(jsonb_build_object(
+                     'name', 'table', 'kind', 'enum', 'required', true,
+                     'values', to_jsonb(grammar_guard.catalog_tables(ARRAY['gg_test']))))$q$,
+                grammar_fingerprint(jsonb_build_array(jsonb_build_object(
+                     'name', 'table', 'kind', 'enum', 'required', true,
+                     'values', to_jsonb(catalog_tables(ARRAY['gg_test'])))))),
+         'grammar:answer',
+         'the catalog gained a table and the new one is now the approved world')
+       > 0 AS reapproved;
+
+SELECT check_grammar('answer') AS quiet_again;
+
+-- And the replacement is on the record, with what the old one last said. It
+-- cannot know whether an arbitrary SQL check got looser -- that is undecidable
+-- -- so it reports the timing, which is the part that accuses.
+SELECT name, last_state_before, what_happened
+  FROM living_assertions.renegotiated ORDER BY name;
 
 -- ------------------------------------------------- arrays and nesting (0.2) --
 -- The shape of a real tool call, which 0.1.0 could not express at all.
@@ -202,27 +240,40 @@ SELECT grammar_fingerprint('[{"name":"t","kind":"enum","values":["a"],"required"
        AS key_order_ignored;
 
 -- And the guard half works on the nested spec too, in both directions.
-SELECT count(*) AS breaks FROM check_grammar('nested',
-    '[{"name":"t","kind":"enum","values":["a"],"required":true}]'::jsonb);
+SELECT living_assertions.state('grammar:nested') AS before_watching;
 
-SELECT approve('nested', '[{"name":"t","kind":"enum","values":["a"],"required":true}]'::jsonb)
-       IS NOT NULL AS approved;
+SELECT watch('nested',
+             $q$select '[{"name":"t","kind":"enum","values":["a"],"required":true}]'::jsonb$q$)
+       > 0 AS watched;
 
-SELECT count(*) AS breaks FROM check_grammar('nested',
-    '[{"name":"t","kind":"enum","values":["a"],"required":true}]'::jsonb);
+SELECT check_grammar('nested') AS unchanged;
 
-SELECT name, severity FROM check_grammar('nested',
-    '[{"name":"t","kind":"enum","values":["a","b"],"required":true}]'::jsonb);
+-- REGRESSION, and the honest half of the port: a spec that is a CONSTANT can
+-- never drift, so this check compares the world against itself forever. Under
+-- 0.2.0 that was invisible -- the caller passed the same literal twice and got
+-- a reassuring silence. Here it is at least stored where it can be read.
+-- The catalog-derived spec used for 'answer' above is the shape that is worth
+-- anything.
+SELECT check_grammar('nested') AS a_constant_spec_cannot_drift;
 
 DROP SCHEMA gg_test CASCADE;
 DROP EXTENSION pg_grammar_guard CASCADE;
+-- The registry goes too, so the upgrade half below starts from nothing. Note
+-- what this implies and the README says out loud: assertions outlive the
+-- consumer that declared them, and an orphaned one turns `erroring` rather than
+-- disappearing -- loud, which is the right direction for this extension.
+DROP EXTENSION pg_living_assertions CASCADE;
 
 -- ------------------------------------------------------------- the upgrade --
 -- The path that matters for anyone already on 0.1.0. Without this test the
 -- upgrade script could be broken and nobody would find out until a user ran it
 -- -- and the only alternative for them would be DROP + CREATE, which takes
 -- approved_grammars with it: exactly the baselines the guard half exists to keep.
-CREATE EXTENSION pg_grammar_guard VERSION '0.1.0';
+-- CASCADE even for 0.1.0, which never needed it: `requires` in the control file
+-- is not per-version, so from 0.3.0 onwards installing ANY version of this
+-- extension pulls pg_living_assertions. Worth knowing before an old pin fails
+-- on a host that does not have it.
+CREATE EXTENSION pg_grammar_guard VERSION '0.1.0' CASCADE;
 SELECT approve('survives', ARRAY[ROW('t', 'enum', ARRAY['a'], true)]::grammar_field[],
                'gbnf', 'approved before the upgrade') IS NOT NULL AS approved_on_0_1_0;
 
@@ -236,5 +287,26 @@ SELECT count(*) AS breaks FROM check_grammar('survives',
 
 -- And the new one answers too.
 SELECT grammar_for('[{"name":"v","kind":"enum","values":["x"],"required":true}]'::jsonb);
+
+-- --------------------------------------------------- 0.2.0 -> 0.3.0 --
+-- The step that moves the guard half out. It WARNS instead of succeeding
+-- quietly, because 0.2.0 stored a fingerprint and never the query that rebuilds
+-- the spec -- so these baselines cannot be re-checked by anyone, and an upgrade
+-- that left you silently unwatched would be this extension's own subject matter
+-- happening to its users.
+ALTER EXTENSION pg_grammar_guard UPDATE TO '0.3.0';
+SELECT extversion FROM pg_extension WHERE extname = 'pg_grammar_guard';
+
+-- Kept, not dropped: it is the only record of what somebody had approved.
+SELECT name, note FROM baselines_from_0_2_0 WHERE name = 'survives';
+
+-- And nothing is watching it until a human names the query again. `unregistered`
+-- rather than an empty result, which would read as a clean bill of health.
+SELECT living_assertions.state('grammar:survives') AS after_the_upgrade;
+
+SELECT watch('survives',
+             $q$select '[{"name":"t","kind":"enum","values":["a"],"required":true}]'::jsonb$q$,
+             're-approved by hand after the 0.3.0 upgrade') > 0 AS rewatched;
+SELECT check_grammar('survives') AS watched_again;
 
 DROP EXTENSION pg_grammar_guard CASCADE;
