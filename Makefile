@@ -1,5 +1,11 @@
 EXTENSION    = pg_grammar_guard
-DATA         = pg_grammar_guard--0.1.0.sql
+# El script de upgrade se instala junto a las dos versiones: sin el, un usuario
+# de 0.1.0 tendria que borrar la extension y volver a crearla, y eso se lleva
+# por delante approved_grammars -- o sea perderia justo los baselines que la
+# mitad guard existe para conservar.
+DATA         = pg_grammar_guard--0.1.0.sql \
+               pg_grammar_guard--0.2.0.sql \
+               pg_grammar_guard--0.1.0--0.2.0.sql
 PG_CONFIG   ?= pg_config
 
 # One installcheck, no dependencies -- the same lesson pg_promise_guard took

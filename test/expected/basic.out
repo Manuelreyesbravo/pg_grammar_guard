@@ -211,6 +211,181 @@ SELECT count(*) AS breaks FROM check_grammar('answer',
       0
 (1 row)
 
+-- ------------------------------------------------- arrays and nesting (0.2) --
+-- The shape of a real tool call, which 0.1.0 could not express at all.
+SELECT grammar_for('[
+    {"name": "action", "kind": "enum", "values": ["select", "count"], "required": true},
+    {"name": "columns", "kind": "array", "required": true,
+     "items": {"kind": "enum", "values": ["id", "monto"]}},
+    {"name": "filter", "kind": "object", "required": false, "fields": [
+        {"name": "column", "kind": "enum", "values": ["id"], "required": true},
+        {"name": "op", "kind": "enum", "values": ["=", "<"], "required": true},
+        {"name": "value", "kind": "integer", "required": false}
+    ]}
+]'::jsonb);
+                                                                 grammar_for                                                                  
+----------------------------------------------------------------------------------------------------------------------------------------------
+ root ::= "{" ws "\"action\"" ws ":" ws root-0 ws "," ws "\"columns\"" ws ":" ws root-1 ws ( "," ws "\"filter\"" ws ":" ws root-2 ws )? "}"  +
+ root-0 ::= "\"select\"" | "\"count\""                                                                                                       +
+ root-1 ::= "[" ws root-1-i (ws "," ws root-1-i){0,15} ws "]"                                                                                +
+ root-1-i ::= "\"id\"" | "\"monto\""                                                                                                         +
+ root-2 ::= "{" ws "\"column\"" ws ":" ws root-2-0 ws "," ws "\"op\"" ws ":" ws root-2-1 ws ( "," ws "\"value\"" ws ":" ws root-2-2 ws )? "}"+
+ root-2-0 ::= "\"id\""                                                                                                                       +
+ root-2-1 ::= "\"=\"" | "\"<\""                                                                                                              +
+ root-2-2 ::= integer                                                                                                                        +
+ string ::= "\"" char* "\""                                                                                                                  +
+ char ::= [^"\\\x00-\x1F] | "\\" (["\\/bfnrt] | "u" hex hex hex hex)                                                                         +
+ hex ::= [0-9a-fA-F]                                                                                                                         +
+ integer ::= "-"? ("0" | [1-9] [0-9]*)                                                                                                       +
+ number ::= integer ("." [0-9]+)? ([eE] [-+]? [0-9]+)?                                                                                       +
+ boolean ::= "true" | "false"                                                                                                                +
+ ws ::= [ \t\n]*                                                                                                                             +
+ 
+(1 row)
+
+-- An array OF objects: two levels of recursion, which is where a hand-written
+-- nested case would have started disagreeing with the root.
+SELECT grammar_for('[
+    {"name": "edits", "kind": "array", "required": true, "items": {
+        "kind": "object", "fields": [
+            {"name": "path", "kind": "enum", "values": ["a.ts"], "required": true},
+            {"name": "text", "kind": "string", "required": true}
+        ]}}
+]'::jsonb);
+                                             grammar_for                                              
+------------------------------------------------------------------------------------------------------
+ root ::= "{" ws "\"edits\"" ws ":" ws root-0 ws "}"                                                 +
+ root-0 ::= "[" ws root-0-i (ws "," ws root-0-i){0,15} ws "]"                                        +
+ root-0-i ::= "{" ws "\"path\"" ws ":" ws root-0-i-0 ws "," ws "\"text\"" ws ":" ws root-0-i-1 ws "}"+
+ root-0-i-0 ::= "\"a.ts\""                                                                           +
+ root-0-i-1 ::= string                                                                               +
+ string ::= "\"" char* "\""                                                                          +
+ char ::= [^"\\\x00-\x1F] | "\\" (["\\/bfnrt] | "u" hex hex hex hex)                                 +
+ hex ::= [0-9a-fA-F]                                                                                 +
+ integer ::= "-"? ("0" | [1-9] [0-9]*)                                                               +
+ number ::= integer ("." [0-9]+)? ([eE] [-+]? [0-9]+)?                                               +
+ boolean ::= "true" | "false"                                                                        +
+ ws ::= [ \t\n]*                                                                                     +
+ 
+(1 row)
+
+-- REGRESSION: arrays are bounded. An unbounded ( ... )* is a loop waiting to
+-- happen -- measured against a local 35B, an array of enum emitted
+-- ["id","id","id", ...] forty-one times until it ran out of budget, every token
+-- legal. A model stuck in that looks exactly like a model working, which is the
+-- worst thing a grammar can do. Default 16, overridable per field.
+SELECT grammar_for('[{"name": "xs", "kind": "array", "required": true, "max_items": 3,
+                     "items": {"kind": "enum", "values": ["a"]}}]'::jsonb);
+                             grammar_for                             
+---------------------------------------------------------------------
+ root ::= "{" ws "\"xs\"" ws ":" ws root-0 ws "}"                   +
+ root-0 ::= "[" ws root-0-i (ws "," ws root-0-i){0,2} ws "]"        +
+ root-0-i ::= "\"a\""                                               +
+ string ::= "\"" char* "\""                                         +
+ char ::= [^"\\\x00-\x1F] | "\\" (["\\/bfnrt] | "u" hex hex hex hex)+
+ hex ::= [0-9a-fA-F]                                                +
+ integer ::= "-"? ("0" | [1-9] [0-9]*)                              +
+ number ::= integer ("." [0-9]+)? ([eE] [-+]? [0-9]+)?              +
+ boolean ::= "true" | "false"                                       +
+ ws ::= [ \t\n]*                                                    +
+ 
+(1 row)
+
+SELECT grammar_for('[{"name": "xs", "kind": "array", "required": true,
+                     "items": {"kind": "enum", "values": ["a"]}}]'::jsonb);
+                             grammar_for                             
+---------------------------------------------------------------------
+ root ::= "{" ws "\"xs\"" ws ":" ws root-0 ws "}"                   +
+ root-0 ::= "[" ws root-0-i (ws "," ws root-0-i){0,15} ws "]"       +
+ root-0-i ::= "\"a\""                                               +
+ string ::= "\"" char* "\""                                         +
+ char ::= [^"\\\x00-\x1F] | "\\" (["\\/bfnrt] | "u" hex hex hex hex)+
+ hex ::= [0-9a-fA-F]                                                +
+ integer ::= "-"? ("0" | [1-9] [0-9]*)                              +
+ number ::= integer ("." [0-9]+)? ([eE] [-+]? [0-9]+)?              +
+ boolean ::= "true" | "false"                                       +
+ ws ::= [ \t\n]*                                                    +
+ 
+(1 row)
+
+SELECT grammar_for('[{"name": "xs", "kind": "array", "required": true, "max_items": 0,
+                     "items": {"kind": "enum", "values": ["a"]}}]'::jsonb);
+ERROR:  field xs: max_items must be >= 1
+CONTEXT:  PL/pgSQL function _reglas(jsonb,text) line 53 at RAISE
+PL/pgSQL function _reglas(jsonb,text) line 87 at assignment
+PL/pgSQL function grammar_for(jsonb,text) line 20 at assignment
+-- Refusals, each one preferred over compiling something subtly wrong.
+SELECT grammar_for('[{"name": "xs", "kind": "array", "required": true}]'::jsonb);
+ERROR:  field xs: array without items
+HINT:  Give items a kind, e.g. {"kind": "enum", "values": [...]}.
+CONTEXT:  PL/pgSQL function _reglas(jsonb,text) line 48 at RAISE
+PL/pgSQL function _reglas(jsonb,text) line 87 at assignment
+PL/pgSQL function grammar_for(jsonb,text) line 20 at assignment
+SELECT grammar_for('[{"name": "o", "kind": "object", "required": true, "fields": []}]'::jsonb);
+ERROR:  field o: object with no fields
+CONTEXT:  PL/pgSQL function _reglas(jsonb,text) line 65 at RAISE
+PL/pgSQL function _reglas(jsonb,text) line 87 at assignment
+PL/pgSQL function grammar_for(jsonb,text) line 20 at assignment
+SELECT grammar_for('[{"name": "o", "kind": "object", "required": true, "fields":
+    [{"name": "a", "kind": "string", "required": false}]}]'::jsonb);
+ERROR:  field o: every subfield is optional
+HINT:  GBNF needs one required field to anchor the commas.
+CONTEXT:  PL/pgSQL function _reglas(jsonb,text) line 73 at RAISE
+PL/pgSQL function _reglas(jsonb,text) line 87 at assignment
+PL/pgSQL function grammar_for(jsonb,text) line 20 at assignment
+SELECT grammar_for('[{"name": "v", "kind": "enum", "values": [], "required": true}]'::jsonb);
+ERROR:  field v: enum with no values
+HINT:  The query that fills this enum returned no rows.
+CONTEXT:  PL/pgSQL function _reglas(jsonb,text) line 26 at RAISE
+PL/pgSQL function _reglas(jsonb,text) line 87 at assignment
+PL/pgSQL function grammar_for(jsonb,text) line 20 at assignment
+SELECT grammar_for('[]'::jsonb);
+ERROR:  no fields given
+HINT:  grammar_for takes a JSON array of field objects.
+CONTEXT:  PL/pgSQL function grammar_for(jsonb,text) line 7 at RAISE
+SELECT grammar_for('[{"name": "v", "kind": "enum", "values": ["x"], "required": true}]'::jsonb, 'lark');
+ERROR:  unknown dialect: lark
+HINT:  grammar_for emits gbnf. For json_schema use the flat grammar_for_json(grammar_field[], 'json_schema').
+CONTEXT:  PL/pgSQL function grammar_for(jsonb,text) line 15 at RAISE
+-- The jsonb fingerprint ignores how the spec was written, which is what makes
+-- approve() usable: the same world approved twice must not read as drift.
+SELECT grammar_fingerprint('[{"name":"t","kind":"enum","values":["a"],"required":true}]'::jsonb)
+     = grammar_fingerprint('[{"kind":"enum","name":"t","required":true,"values":["a"]}]'::jsonb)
+       AS key_order_ignored;
+ key_order_ignored 
+-------------------
+ t
+(1 row)
+
+-- And the guard half works on the nested spec too, in both directions.
+SELECT count(*) AS breaks FROM check_grammar('nested',
+    '[{"name":"t","kind":"enum","values":["a"],"required":true}]'::jsonb);
+ breaks 
+--------
+      1
+(1 row)
+
+SELECT approve('nested', '[{"name":"t","kind":"enum","values":["a"],"required":true}]'::jsonb)
+       IS NOT NULL AS approved;
+ approved 
+----------
+ t
+(1 row)
+
+SELECT count(*) AS breaks FROM check_grammar('nested',
+    '[{"name":"t","kind":"enum","values":["a"],"required":true}]'::jsonb);
+ breaks 
+--------
+      0
+(1 row)
+
+SELECT name, severity FROM check_grammar('nested',
+    '[{"name":"t","kind":"enum","values":["a","b"],"required":true}]'::jsonb);
+  name  | severity 
+--------+----------
+ nested | drift
+(1 row)
+
 DROP SCHEMA gg_test CASCADE;
 NOTICE:  drop cascades to 5 other objects
 DETAIL:  drop cascades to table gg_test.clientes
@@ -218,4 +393,55 @@ drop cascades to table gg_test.facturas
 drop cascades to view gg_test.vigentes
 drop cascades to type gg_test.estado
 drop cascades to table gg_test.pagos
+DROP EXTENSION pg_grammar_guard CASCADE;
+-- ------------------------------------------------------------- the upgrade --
+-- The path that matters for anyone already on 0.1.0. Without this test the
+-- upgrade script could be broken and nobody would find out until a user ran it
+-- -- and the only alternative for them would be DROP + CREATE, which takes
+-- approved_grammars with it: exactly the baselines the guard half exists to keep.
+CREATE EXTENSION pg_grammar_guard VERSION '0.1.0';
+SELECT approve('survives', ARRAY[ROW('t', 'enum', ARRAY['a'], true)]::grammar_field[],
+               'gbnf', 'approved before the upgrade') IS NOT NULL AS approved_on_0_1_0;
+ approved_on_0_1_0 
+-------------------
+ t
+(1 row)
+
+ALTER EXTENSION pg_grammar_guard UPDATE TO '0.2.0';
+SELECT extversion FROM pg_extension WHERE extname = 'pg_grammar_guard';
+ extversion 
+------------
+ 0.2.0
+(1 row)
+
+-- The baseline is still there, and the flat API still answers.
+SELECT name, note FROM approved_grammars WHERE name = 'survives';
+   name   |            note             
+----------+-----------------------------
+ survives | approved before the upgrade
+(1 row)
+
+SELECT count(*) AS breaks FROM check_grammar('survives',
+    ARRAY[ROW('t', 'enum', ARRAY['a'], true)]::grammar_field[]);
+ breaks 
+--------
+      0
+(1 row)
+
+-- And the new one answers too.
+SELECT grammar_for('[{"name":"v","kind":"enum","values":["x"],"required":true}]'::jsonb);
+                             grammar_for                             
+---------------------------------------------------------------------
+ root ::= "{" ws "\"v\"" ws ":" ws root-0 ws "}"                    +
+ root-0 ::= "\"x\""                                                 +
+ string ::= "\"" char* "\""                                         +
+ char ::= [^"\\\x00-\x1F] | "\\" (["\\/bfnrt] | "u" hex hex hex hex)+
+ hex ::= [0-9a-fA-F]                                                +
+ integer ::= "-"? ("0" | [1-9] [0-9]*)                              +
+ number ::= integer ("." [0-9]+)? ([eE] [-+]? [0-9]+)?              +
+ boolean ::= "true" | "false"                                       +
+ ws ::= [ \t\n]*                                                    +
+ 
+(1 row)
+
 DROP EXTENSION pg_grammar_guard CASCADE;

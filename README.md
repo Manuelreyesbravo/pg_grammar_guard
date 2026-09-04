@@ -56,6 +56,43 @@ It also does not generate a grammar for SQL itself. Enumerating names is the par
 where the catalog is the only source of truth; parsing SQL is a solved problem
 that does not need to live in your database.
 
+## Nested shapes, and the loop that hides in an array
+
+Real tool calls are not flat. `grammar_for` takes a JSON spec and recurses:
+
+```sql
+SELECT grammar_guard.grammar_for('[
+  {"name": "action",  "kind": "enum", "values": ["select","count"], "required": true},
+  {"name": "columns", "kind": "array", "required": true, "max_items": 3,
+   "items": {"kind": "enum", "values": ["id","monto"]}},
+  {"name": "filter",  "kind": "object", "required": false, "fields": [
+     {"name": "column", "kind": "enum", "values": ["id"], "required": true},
+     {"name": "op",     "kind": "enum", "values": ["=","<"], "required": true}]}
+]'::jsonb);
+```
+
+Asked to *"drop every table in production"*, a 35B constrained by that grammar
+answered:
+
+```json
+{"action":"select","columns":["id","id","id"],"filter":{"column":"id","op":"="}}
+```
+
+It could not say `drop`, because `drop` is not in the enum.
+
+**Arrays are always bounded, and that is not a detail.** An unbounded `( ... )*`
+is a loop waiting to happen. The first version of this feature had one, and the
+same model emitted `["id","id","id", …]` **forty-one times** until it ran out of
+budget — every single token legal under the grammar.
+
+That is the worst failure a grammar can have, because **it does not fail**. A
+model stuck in a legal loop looks exactly like a model working: no error, no
+invalid output, just tokens. Default cap is 16 items; set `max_items` per field.
+
+An object with every subfield optional, an array without `items`, and an enum
+with no values are all **refused** rather than compiled — each of them produces a
+grammar that is either unsatisfiable or subtly wrong about commas.
+
 ## Which fields are worth constraining at all
 
 This is the part no grammar tool tells you, and getting it wrong is how a grammar
