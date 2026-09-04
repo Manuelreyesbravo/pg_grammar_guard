@@ -227,7 +227,7 @@ SELECT grammar_for('[
 ----------------------------------------------------------------------------------------------------------------------------------------------
  root ::= "{" ws "\"action\"" ws ":" ws root-0 ws "," ws "\"columns\"" ws ":" ws root-1 ws ( "," ws "\"filter\"" ws ":" ws root-2 ws )? "}"  +
  root-0 ::= "\"select\"" | "\"count\""                                                                                                       +
- root-1 ::= "[" ws root-1-i (ws "," ws root-1-i){0,15} ws "]"                                                                                +
+ root-1 ::= "[" ws root-1-i (ws "," ws root-1-i){0,31} ws "]"                                                                                +
  root-1-i ::= "\"id\"" | "\"monto\""                                                                                                         +
  root-2 ::= "{" ws "\"column\"" ws ":" ws root-2-0 ws "," ws "\"op\"" ws ":" ws root-2-1 ws ( "," ws "\"value\"" ws ":" ws root-2-2 ws )? "}"+
  root-2-0 ::= "\"id\""                                                                                                                       +
@@ -255,7 +255,7 @@ SELECT grammar_for('[
                                              grammar_for                                              
 ------------------------------------------------------------------------------------------------------
  root ::= "{" ws "\"edits\"" ws ":" ws root-0 ws "}"                                                 +
- root-0 ::= "[" ws root-0-i (ws "," ws root-0-i){0,15} ws "]"                                        +
+ root-0 ::= "[" ws root-0-i (ws "," ws root-0-i){0,31} ws "]"                                        +
  root-0-i ::= "{" ws "\"path\"" ws ":" ws root-0-i-0 ws "," ws "\"text\"" ws ":" ws root-0-i-1 ws "}"+
  root-0-i-0 ::= "\"a.ts\""                                                                           +
  root-0-i-1 ::= string                                                                               +
@@ -296,7 +296,7 @@ SELECT grammar_for('[{"name": "xs", "kind": "array", "required": true,
                              grammar_for                             
 ---------------------------------------------------------------------
  root ::= "{" ws "\"xs\"" ws ":" ws root-0 ws "}"                   +
- root-0 ::= "[" ws root-0-i (ws "," ws root-0-i){0,15} ws "]"       +
+ root-0 ::= "[" ws root-0-i (ws "," ws root-0-i){0,31} ws "]"       +
  root-0-i ::= "\"a\""                                               +
  string ::= "\"" char* "\""                                         +
  char ::= [^"\\\x00-\x1F] | "\\" (["\\/bfnrt] | "u" hex hex hex hex)+
@@ -311,33 +311,76 @@ SELECT grammar_for('[{"name": "xs", "kind": "array", "required": true,
 SELECT grammar_for('[{"name": "xs", "kind": "array", "required": true, "max_items": 0,
                      "items": {"kind": "enum", "values": ["a"]}}]'::jsonb);
 ERROR:  field xs: max_items must be >= 1
-CONTEXT:  PL/pgSQL function _reglas(jsonb,text) line 53 at RAISE
-PL/pgSQL function _reglas(jsonb,text) line 87 at assignment
+CONTEXT:  PL/pgSQL function _reglas(jsonb,text) line 64 at RAISE
+PL/pgSQL function _reglas(jsonb,text) line 112 at assignment
+PL/pgSQL function grammar_for(jsonb,text) line 20 at assignment
+-- min_items exists because the measurement found real arrays of length ZERO.
+-- Requiring one element would make a legitimate empty list unreachable -- the
+-- same failure as an unbounded array, in the other direction.
+SELECT grammar_for('[{"name": "xs", "kind": "array", "required": true, "min_items": 0,
+                     "max_items": 2, "items": {"kind": "enum", "values": ["a"]}}]'::jsonb);
+                             grammar_for                             
+---------------------------------------------------------------------
+ root ::= "{" ws "\"xs\"" ws ":" ws root-0 ws "}"                   +
+ root-0 ::= "[" ws ( root-0-i (ws "," ws root-0-i){0,1} ws )? "]"   +
+ root-0-i ::= "\"a\""                                               +
+ string ::= "\"" char* "\""                                         +
+ char ::= [^"\\\x00-\x1F] | "\\" (["\\/bfnrt] | "u" hex hex hex hex)+
+ hex ::= [0-9a-fA-F]                                                +
+ integer ::= "-"? ("0" | [1-9] [0-9]*)                              +
+ number ::= integer ("." [0-9]+)? ([eE] [-+]? [0-9]+)?              +
+ boolean ::= "true" | "false"                                       +
+ ws ::= [ \t\n]*                                                    +
+ 
+(1 row)
+
+SELECT grammar_for('[{"name": "xs", "kind": "array", "required": true, "min_items": 2,
+                     "max_items": 4, "items": {"kind": "enum", "values": ["a"]}}]'::jsonb);
+                             grammar_for                             
+---------------------------------------------------------------------
+ root ::= "{" ws "\"xs\"" ws ":" ws root-0 ws "}"                   +
+ root-0 ::= "[" ws root-0-i (ws "," ws root-0-i){1,3} ws "]"        +
+ root-0-i ::= "\"a\""                                               +
+ string ::= "\"" char* "\""                                         +
+ char ::= [^"\\\x00-\x1F] | "\\" (["\\/bfnrt] | "u" hex hex hex hex)+
+ hex ::= [0-9a-fA-F]                                                +
+ integer ::= "-"? ("0" | [1-9] [0-9]*)                              +
+ number ::= integer ("." [0-9]+)? ([eE] [-+]? [0-9]+)?              +
+ boolean ::= "true" | "false"                                       +
+ ws ::= [ \t\n]*                                                    +
+ 
+(1 row)
+
+SELECT grammar_for('[{"name": "xs", "kind": "array", "required": true, "min_items": 5,
+                     "max_items": 2, "items": {"kind": "enum", "values": ["a"]}}]'::jsonb);
+ERROR:  field xs: min_items must be between 0 and max_items
+CONTEXT:  PL/pgSQL function _reglas(jsonb,text) line 72 at RAISE
+PL/pgSQL function _reglas(jsonb,text) line 112 at assignment
 PL/pgSQL function grammar_for(jsonb,text) line 20 at assignment
 -- Refusals, each one preferred over compiling something subtly wrong.
 SELECT grammar_for('[{"name": "xs", "kind": "array", "required": true}]'::jsonb);
 ERROR:  field xs: array without items
 HINT:  Give items a kind, e.g. {"kind": "enum", "values": [...]}.
-CONTEXT:  PL/pgSQL function _reglas(jsonb,text) line 48 at RAISE
-PL/pgSQL function _reglas(jsonb,text) line 87 at assignment
+CONTEXT:  PL/pgSQL function _reglas(jsonb,text) line 49 at RAISE
+PL/pgSQL function _reglas(jsonb,text) line 112 at assignment
 PL/pgSQL function grammar_for(jsonb,text) line 20 at assignment
 SELECT grammar_for('[{"name": "o", "kind": "object", "required": true, "fields": []}]'::jsonb);
 ERROR:  field o: object with no fields
-CONTEXT:  PL/pgSQL function _reglas(jsonb,text) line 65 at RAISE
-PL/pgSQL function _reglas(jsonb,text) line 87 at assignment
+CONTEXT:  PL/pgSQL function _reglas(jsonb,text) line 90 at RAISE
+PL/pgSQL function _reglas(jsonb,text) line 112 at assignment
 PL/pgSQL function grammar_for(jsonb,text) line 20 at assignment
 SELECT grammar_for('[{"name": "o", "kind": "object", "required": true, "fields":
     [{"name": "a", "kind": "string", "required": false}]}]'::jsonb);
 ERROR:  field o: every subfield is optional
 HINT:  GBNF needs one required field to anchor the commas.
-CONTEXT:  PL/pgSQL function _reglas(jsonb,text) line 73 at RAISE
-PL/pgSQL function _reglas(jsonb,text) line 87 at assignment
+CONTEXT:  PL/pgSQL function _reglas(jsonb,text) line 98 at RAISE
+PL/pgSQL function _reglas(jsonb,text) line 112 at assignment
 PL/pgSQL function grammar_for(jsonb,text) line 20 at assignment
 SELECT grammar_for('[{"name": "v", "kind": "enum", "values": [], "required": true}]'::jsonb);
 ERROR:  field v: enum with no values
 HINT:  The query that fills this enum returned no rows.
-CONTEXT:  PL/pgSQL function _reglas(jsonb,text) line 26 at RAISE
-PL/pgSQL function _reglas(jsonb,text) line 87 at assignment
+CONTEXT:  PL/pgSQL function _reglas(jsonb,text) line 27 at RAISE
+PL/pgSQL function _reglas(jsonb,text) line 112 at assignment
 PL/pgSQL function grammar_for(jsonb,text) line 20 at assignment
 SELECT grammar_for('[]'::jsonb);
 ERROR:  no fields given

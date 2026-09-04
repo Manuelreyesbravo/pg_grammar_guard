@@ -134,6 +134,16 @@ SELECT grammar_for('[{"name": "xs", "kind": "array", "required": true,
 SELECT grammar_for('[{"name": "xs", "kind": "array", "required": true, "max_items": 0,
                      "items": {"kind": "enum", "values": ["a"]}}]'::jsonb);
 
+-- min_items exists because the measurement found real arrays of length ZERO.
+-- Requiring one element would make a legitimate empty list unreachable -- the
+-- same failure as an unbounded array, in the other direction.
+SELECT grammar_for('[{"name": "xs", "kind": "array", "required": true, "min_items": 0,
+                     "max_items": 2, "items": {"kind": "enum", "values": ["a"]}}]'::jsonb);
+SELECT grammar_for('[{"name": "xs", "kind": "array", "required": true, "min_items": 2,
+                     "max_items": 4, "items": {"kind": "enum", "values": ["a"]}}]'::jsonb);
+SELECT grammar_for('[{"name": "xs", "kind": "array", "required": true, "min_items": 5,
+                     "max_items": 2, "items": {"kind": "enum", "values": ["a"]}}]'::jsonb);
+
 -- Refusals, each one preferred over compiling something subtly wrong.
 SELECT grammar_for('[{"name": "xs", "kind": "array", "required": true}]'::jsonb);
 SELECT grammar_for('[{"name": "o", "kind": "object", "required": true, "fields": []}]'::jsonb);

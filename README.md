@@ -87,7 +87,20 @@ budget — every single token legal under the grammar.
 
 That is the worst failure a grammar can have, because **it does not fail**. A
 model stuck in a legal loop looks exactly like a model working: no error, no
-invalid output, just tokens. Default cap is 16 items; set `max_items` per field.
+invalid output, just tokens.
+
+The bounds are **measured, not chosen**. Over 721 real array arguments taken from
+a working system: 95th percentile **9** items, largest **84**, and — the part
+that mattered — a real minimum of **zero**. So `max_items` defaults to 32 and
+`min_items` to 1, both overridable. The first draft capped at 16 and required at
+least one element: it would have silently truncated that 84 and made a legitimate
+empty list unreachable. **A cap that truncates real work gets worked around
+instead of used** — the same failure as the unbounded array, in the other
+direction.
+
+A cap still has to exist, and the trade is deliberate: **truncating is far less
+bad than never stopping**, because a short array is still valid, closed JSON that
+the caller can see is short.
 
 An object with every subfield optional, an array without `items`, and an enum
 with no values are all **refused** rather than compiled — each of them produces a
@@ -146,6 +159,31 @@ An empty result means the grammar you approved still matches the world.
 `never_approved` is reported as its own severity and never as `drift`: a grammar
 nobody approved is not one that changed, and collapsing the two is how a monitor
 starts reporting something it cannot know.
+
+## Where it runs, and how big it gets
+
+`gbnf` is not a llama.cpp-only format. **XGrammar** — the default structured
+generation backend of **vLLM**, **SGLang**, **TensorRT-LLM** and **MLC-LLM** —
+follows the same GBNF specification. Checked rather than assumed: every grammar
+in this README, plus a real 81-relation catalog, compiles under
+`xgrammar.Grammar.from_ebnf` (**5/5**) and under llama.cpp.
+
+Size, measured on that same real catalog (81 relations, 410 distinct columns):
+
+| | bytes |
+|---|---|
+| flat: table enum + column enum | **10.9 KB** |
+| correlated: columns depend on the chosen table | **22.2 KB** |
+
+So a correlated grammar costs about **2×** the flat one, and stays linear in the
+number of (table, column) pairs rather than exploding. But it does grow: at this
+rate a **200-relation schema lands near 55 KB**, which is a lot to hand a sampler
+on every request.
+
+**Constrain a subset, not the whole catalog.** Pass the tables the request could
+plausibly touch. That is not a workaround for a limitation — a grammar listing
+every table in the database is the 45k-token tool schema all over again, and the
+whole point here is to hand the model a small true world instead of a big one.
 
 ## Dialects
 
