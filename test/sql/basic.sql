@@ -144,6 +144,48 @@ SELECT grammar_for('[{"name": "xs", "kind": "array", "required": true, "min_item
 SELECT grammar_for('[{"name": "xs", "kind": "array", "required": true, "min_items": 5,
                      "max_items": 2, "items": {"kind": "enum", "values": ["a"]}}]'::jsonb);
 
+-- --------------------------------------------------------- correlation --
+-- The canonical case, and the reason this extension exists: without it a
+-- grammar permits {"table":"facturas","column":"nombre"} where nombre belongs
+-- to clientes -- well formed and impossible.
+SELECT grammar_for(jsonb_build_array(
+    catalog_correlated(ARRAY['gg_test.clientes', 'gg_test.facturas'])));
+
+-- Built straight from the catalog, so it tracks a dropped column like the rest.
+SELECT (catalog_correlated(ARRAY['gg_test.clientes'])
+        -> 'dependents' -> 0 -> 'by_value' -> 'gg_test.clientes') AS columnas_de_clientes;
+
+-- With another required field alongside: it is shared between branches and its
+-- rule is emitted once, not once per pivot value.
+SELECT grammar_for(jsonb_build_array(
+    catalog_correlated(ARRAY['gg_test.clientes', 'gg_test.facturas']),
+    jsonb_build_object('name','limit','kind','integer','required',true)));
+
+-- Refusals specific to correlation.
+-- El pivote no puede ser opcional.
+SELECT grammar_for('[{"name":"t","kind":"enum","values":["a"],"required":false,
+    "dependents":[{"name":"c","kind":"enum","required":true,"by_value":{"a":["x"]}}]}]'::jsonb);
+
+-- Un valor del pivote sin columnas legales haria esa rama insatisfacible: el
+-- modelo puede entrar y quedarse sin ningun token legal.
+SELECT grammar_for('[{"name":"t","kind":"enum","values":["a","b"],"required":true,
+    "dependents":[{"name":"c","kind":"enum","required":true,"by_value":{"a":["x"]}}]}]'::jsonb);
+
+-- Dos pivotes pediria una alternativa por COMBINACION -- la explosion que la
+-- gente espera de esto y que no ocurre, justamente porque se rechaza.
+SELECT grammar_for('[{"name":"t","kind":"enum","values":["a"],"required":true,
+     "dependents":[{"name":"c","kind":"enum","required":true,"by_value":{"a":["x"]}}]},
+    {"name":"u","kind":"enum","values":["a"],"required":true,
+     "dependents":[{"name":"d","kind":"enum","required":true,"by_value":{"a":["y"]}}]}]'::jsonb);
+
+-- Y un dependiente declarado DOS veces. Este caso existe por el defecto que lo
+-- destapo: la primera version emitia el pivote sin sus dependientes cuando no
+-- estaban tambien en fields, y salia una gramatica valida a la que le FALTABA un
+-- campo. Nada fallaba; el objeto simplemente venia corto.
+SELECT grammar_for('[{"name":"t","kind":"enum","values":["a"],"required":true,
+     "dependents":[{"name":"c","kind":"enum","required":true,"by_value":{"a":["x"]}}]},
+    {"name":"c","kind":"enum","values":["x"],"required":true}]'::jsonb);
+
 -- Refusals, each one preferred over compiling something subtly wrong.
 SELECT grammar_for('[{"name": "xs", "kind": "array", "required": true}]'::jsonb);
 SELECT grammar_for('[{"name": "o", "kind": "object", "required": true, "fields": []}]'::jsonb);

@@ -160,6 +160,44 @@ An empty result means the grammar you approved still matches the world.
 nobody approved is not one that changed, and collapsing the two is how a monitor
 starts reporting something it cannot know.
 
+## Correlation — the column depends on the table
+
+A flat grammar happily permits this:
+
+```json
+{"table": "facturas", "column": "nombre"}
+```
+
+where `nombre` belongs to `clientes`. **Well formed and impossible** — exactly what
+this extension exists to make unreachable. One call builds it from the catalog:
+
+```sql
+SELECT grammar_guard.grammar_for(jsonb_build_array(
+    grammar_guard.catalog_correlated(ARRAY['app.clientes', 'app.facturas'])));
+```
+```
+root ::= "{" ws "\"table\"" ws ":" ws "\"app.clientes\""  ws "," … root-v0-d0 ws "}"
+       | "{" ws "\"table\"" ws ":" ws "\"app.facturas\"" ws "," … root-v1-d0 ws "}"
+root-v0-d0 ::= "\"id\"" | "\"rut\"" | "\"nombre\""
+root-v1-d0 ::= "\"id\"" | "\"cliente_id\"" | "\"monto\""
+```
+
+One alternative per table, so the legal columns are chosen by the token the model
+**already emitted**. Asked point blank for a column that exists in the database
+but not in that table, a local 35B could not produce it:
+
+| asked for | emitted |
+|---|---|
+| `path` from `public.projects` | `{"table":"public.projects","column":"path"}` |
+| **`db_connection` from `public.nodes`** — it is a column of `projects` | `{"table":"public.nodes","column":"id"}` |
+| `inventada_xyz` from `public.projects` | `{"table":"public.projects","column":"id"}` |
+
+Only **one** field per object may carry dependents. Two would need an alternative
+per *combination*, which is the exponential blowup people expect here — it is
+refused rather than quietly emitted. And a pivot value with no legal dependents
+is refused too: an unsatisfiable branch is worse than a missing one, because the
+model can enter it and then have no legal token left.
+
 ## Where it runs, and how big it gets
 
 `gbnf` is not a llama.cpp-only format. **XGrammar** — the default structured
