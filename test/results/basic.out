@@ -311,8 +311,8 @@ SELECT grammar_for('[{"name": "xs", "kind": "array", "required": true,
 SELECT grammar_for('[{"name": "xs", "kind": "array", "required": true, "max_items": 0,
                      "items": {"kind": "enum", "values": ["a"]}}]'::jsonb);
 ERROR:  field xs: max_items must be >= 1
-CONTEXT:  PL/pgSQL function _reglas(jsonb,text) line 64 at RAISE
-PL/pgSQL function _reglas(jsonb,text) line 112 at assignment
+CONTEXT:  PL/pgSQL function _reglas(jsonb,text) line 65 at RAISE
+PL/pgSQL function _reglas(jsonb,text) line 140 at assignment
 PL/pgSQL function grammar_for(jsonb,text) line 20 at assignment
 -- min_items exists because the measurement found real arrays of length ZERO.
 -- Requiring one element would make a legitimate empty list unreachable -- the
@@ -354,33 +354,121 @@ SELECT grammar_for('[{"name": "xs", "kind": "array", "required": true, "min_item
 SELECT grammar_for('[{"name": "xs", "kind": "array", "required": true, "min_items": 5,
                      "max_items": 2, "items": {"kind": "enum", "values": ["a"]}}]'::jsonb);
 ERROR:  field xs: min_items must be between 0 and max_items
-CONTEXT:  PL/pgSQL function _reglas(jsonb,text) line 72 at RAISE
-PL/pgSQL function _reglas(jsonb,text) line 112 at assignment
+CONTEXT:  PL/pgSQL function _reglas(jsonb,text) line 73 at RAISE
+PL/pgSQL function _reglas(jsonb,text) line 140 at assignment
+PL/pgSQL function grammar_for(jsonb,text) line 20 at assignment
+-- --------------------------------------------------------- correlation --
+-- The canonical case, and the reason this extension exists: without it a
+-- grammar permits {"table":"facturas","column":"nombre"} where nombre belongs
+-- to clientes -- well formed and impossible.
+SELECT grammar_for(jsonb_build_array(
+    catalog_correlated(ARRAY['gg_test.clientes', 'gg_test.facturas'])));
+                                                                                                       grammar_for                                                                                                        
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ root ::= "{" ws "\"table\"" ws ":" ws "\"gg_test.clientes\"" ws "," ws "\"column\"" ws ":" ws root-v0-d0 ws "}" | "{" ws "\"table\"" ws ":" ws "\"gg_test.facturas\"" ws "," ws "\"column\"" ws ":" ws root-v1-d0 ws "}"+
+ root-v0-d0 ::= "\"id\"" | "\"nombre\""                                                                                                                                                                                  +
+ root-v1-d0 ::= "\"id\"" | "\"cliente_id\"" | "\"monto\""                                                                                                                                                                +
+ string ::= "\"" char* "\""                                                                                                                                                                                              +
+ char ::= [^"\\\x00-\x1F] | "\\" (["\\/bfnrt] | "u" hex hex hex hex)                                                                                                                                                     +
+ hex ::= [0-9a-fA-F]                                                                                                                                                                                                     +
+ integer ::= "-"? ("0" | [1-9] [0-9]*)                                                                                                                                                                                   +
+ number ::= integer ("." [0-9]+)? ([eE] [-+]? [0-9]+)?                                                                                                                                                                   +
+ boolean ::= "true" | "false"                                                                                                                                                                                            +
+ ws ::= [ \t\n]*                                                                                                                                                                                                         +
+ 
+(1 row)
+
+-- Built straight from the catalog, so it tracks a dropped column like the rest.
+SELECT (catalog_correlated(ARRAY['gg_test.clientes'])
+        -> 'dependents' -> 0 -> 'by_value' -> 'gg_test.clientes') AS columnas_de_clientes;
+ columnas_de_clientes 
+----------------------
+ ["id", "nombre"]
+(1 row)
+
+-- With another required field alongside: it is shared between branches and its
+-- rule is emitted once, not once per pivot value.
+SELECT grammar_for(jsonb_build_array(
+    catalog_correlated(ARRAY['gg_test.clientes', 'gg_test.facturas']),
+    jsonb_build_object('name','limit','kind','integer','required',true)));
+                                                                                                                                              grammar_for                                                                                                                                               
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ root ::= "{" ws "\"table\"" ws ":" ws "\"gg_test.clientes\"" ws "," ws "\"column\"" ws ":" ws root-v0-d0 ws "," ws "\"limit\"" ws ":" ws root-1 ws "}" | "{" ws "\"table\"" ws ":" ws "\"gg_test.facturas\"" ws "," ws "\"column\"" ws ":" ws root-v1-d0 ws "," ws "\"limit\"" ws ":" ws root-1 ws "}"+
+ root-v0-d0 ::= "\"id\"" | "\"nombre\""                                                                                                                                                                                                                                                                +
+ root-1 ::= integer                                                                                                                                                                                                                                                                                    +
+ root-v1-d0 ::= "\"id\"" | "\"cliente_id\"" | "\"monto\""                                                                                                                                                                                                                                              +
+ string ::= "\"" char* "\""                                                                                                                                                                                                                                                                            +
+ char ::= [^"\\\x00-\x1F] | "\\" (["\\/bfnrt] | "u" hex hex hex hex)                                                                                                                                                                                                                                   +
+ hex ::= [0-9a-fA-F]                                                                                                                                                                                                                                                                                   +
+ integer ::= "-"? ("0" | [1-9] [0-9]*)                                                                                                                                                                                                                                                                 +
+ number ::= integer ("." [0-9]+)? ([eE] [-+]? [0-9]+)?                                                                                                                                                                                                                                                 +
+ boolean ::= "true" | "false"                                                                                                                                                                                                                                                                          +
+ ws ::= [ \t\n]*                                                                                                                                                                                                                                                                                       +
+ 
+(1 row)
+
+-- Refusals specific to correlation.
+-- El pivote no puede ser opcional.
+SELECT grammar_for('[{"name":"t","kind":"enum","values":["a"],"required":false,
+    "dependents":[{"name":"c","kind":"enum","required":true,"by_value":{"a":["x"]}}]}]'::jsonb);
+ERROR:  field t: a correlated field must be required
+CONTEXT:  PL/pgSQL function _correlacionado(jsonb,text,integer) line 22 at RAISE
+PL/pgSQL function _reglas(jsonb,text) line 118 at RETURN
+PL/pgSQL function grammar_for(jsonb,text) line 20 at assignment
+-- Un valor del pivote sin columnas legales haria esa rama insatisfacible: el
+-- modelo puede entrar y quedarse sin ningun token legal.
+SELECT grammar_for('[{"name":"t","kind":"enum","values":["a","b"],"required":true,
+    "dependents":[{"name":"c","kind":"enum","required":true,"by_value":{"a":["x"]}}]}]'::jsonb);
+ERROR:  field c: no values for t = b
+HINT:  Every value of the pivot needs at least one value for each dependent, or drop it from the pivot.
+CONTEXT:  PL/pgSQL function _correlacionado(jsonb,text,integer) line 73 at RAISE
+PL/pgSQL function _reglas(jsonb,text) line 118 at RETURN
+PL/pgSQL function grammar_for(jsonb,text) line 20 at assignment
+-- Dos pivotes pediria una alternativa por COMBINACION -- la explosion que la
+-- gente espera de esto y que no ocurre, justamente porque se rechaza.
+SELECT grammar_for('[{"name":"t","kind":"enum","values":["a"],"required":true,
+     "dependents":[{"name":"c","kind":"enum","required":true,"by_value":{"a":["x"]}}]},
+    {"name":"u","kind":"enum","values":["a"],"required":true,
+     "dependents":[{"name":"d","kind":"enum","required":true,"by_value":{"a":["y"]}}]}]'::jsonb);
+ERROR:  field root: two correlated fields in one object
+HINT:  Only one field per object may carry dependents.
+CONTEXT:  PL/pgSQL function _reglas(jsonb,text) line 110 at RAISE
+PL/pgSQL function grammar_for(jsonb,text) line 20 at assignment
+-- Y un dependiente declarado DOS veces. Este caso existe por el defecto que lo
+-- destapo: la primera version emitia el pivote sin sus dependientes cuando no
+-- estaban tambien en fields, y salia una gramatica valida a la que le FALTABA un
+-- campo. Nada fallaba; el objeto simplemente venia corto.
+SELECT grammar_for('[{"name":"t","kind":"enum","values":["a"],"required":true,
+     "dependents":[{"name":"c","kind":"enum","required":true,"by_value":{"a":["x"]}}]},
+    {"name":"c","kind":"enum","values":["x"],"required":true}]'::jsonb);
+ERROR:  field c: a dependent is declared inside dependents, not again in fields
+CONTEXT:  PL/pgSQL function _correlacionado(jsonb,text,integer) line 49 at RAISE
+PL/pgSQL function _reglas(jsonb,text) line 118 at RETURN
 PL/pgSQL function grammar_for(jsonb,text) line 20 at assignment
 -- Refusals, each one preferred over compiling something subtly wrong.
 SELECT grammar_for('[{"name": "xs", "kind": "array", "required": true}]'::jsonb);
 ERROR:  field xs: array without items
 HINT:  Give items a kind, e.g. {"kind": "enum", "values": [...]}.
-CONTEXT:  PL/pgSQL function _reglas(jsonb,text) line 49 at RAISE
-PL/pgSQL function _reglas(jsonb,text) line 112 at assignment
+CONTEXT:  PL/pgSQL function _reglas(jsonb,text) line 50 at RAISE
+PL/pgSQL function _reglas(jsonb,text) line 140 at assignment
 PL/pgSQL function grammar_for(jsonb,text) line 20 at assignment
 SELECT grammar_for('[{"name": "o", "kind": "object", "required": true, "fields": []}]'::jsonb);
 ERROR:  field o: object with no fields
-CONTEXT:  PL/pgSQL function _reglas(jsonb,text) line 90 at RAISE
-PL/pgSQL function _reglas(jsonb,text) line 112 at assignment
+CONTEXT:  PL/pgSQL function _reglas(jsonb,text) line 91 at RAISE
+PL/pgSQL function _reglas(jsonb,text) line 140 at assignment
 PL/pgSQL function grammar_for(jsonb,text) line 20 at assignment
 SELECT grammar_for('[{"name": "o", "kind": "object", "required": true, "fields":
     [{"name": "a", "kind": "string", "required": false}]}]'::jsonb);
 ERROR:  field o: every subfield is optional
 HINT:  GBNF needs one required field to anchor the commas.
-CONTEXT:  PL/pgSQL function _reglas(jsonb,text) line 98 at RAISE
-PL/pgSQL function _reglas(jsonb,text) line 112 at assignment
+CONTEXT:  PL/pgSQL function _reglas(jsonb,text) line 126 at RAISE
+PL/pgSQL function _reglas(jsonb,text) line 140 at assignment
 PL/pgSQL function grammar_for(jsonb,text) line 20 at assignment
 SELECT grammar_for('[{"name": "v", "kind": "enum", "values": [], "required": true}]'::jsonb);
 ERROR:  field v: enum with no values
 HINT:  The query that fills this enum returned no rows.
-CONTEXT:  PL/pgSQL function _reglas(jsonb,text) line 27 at RAISE
-PL/pgSQL function _reglas(jsonb,text) line 112 at assignment
+CONTEXT:  PL/pgSQL function _reglas(jsonb,text) line 28 at RAISE
+PL/pgSQL function _reglas(jsonb,text) line 140 at assignment
 PL/pgSQL function grammar_for(jsonb,text) line 20 at assignment
 SELECT grammar_for('[]'::jsonb);
 ERROR:  no fields given
