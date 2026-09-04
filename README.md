@@ -56,6 +56,35 @@ It also does not generate a grammar for SQL itself. Enumerating names is the par
 where the catalog is the only source of truth; parsing SQL is a solved problem
 that does not need to live in your database.
 
+## Which fields are worth constraining at all
+
+This is the part no grammar tool tells you, and getting it wrong is how a grammar
+starts rejecting correct answers.
+
+A field belongs in the grammar only if its set of legal values is **complete** —
+something the catalog knows *in full*, right now:
+
+| | examples | put it in |
+|---|---|---|
+| **closed** | table names · the columns of a given table · an enum's labels · the argument names of a known function | **the grammar** |
+| **open** | file paths · shell commands · free text · arbitrary SQL | **your validator**, always |
+
+Enumerating an open set looks like it works and quietly caps out. Measured on a
+real workload of 1.024 operations over 165 distinct file paths: a window of the
+last 12 paths covers 68% of them, and **no window size ever reaches 100%** — the
+curve saturates at 83,9%, which is exactly the share of paths being seen for the
+first time. Any system that is actually working keeps creating new ones.
+
+So the rule is not "enumerate more". It is: **enumerate what is complete, validate
+what is not.** A grammar built over an open set does not fail loudly — it makes
+the correct answer unreachable, and you find out from a user, not from a log.
+
+One consequence worth stating: constraining a field also makes it **silent**. A
+validator that rejects leaves a record you can count; a grammar that forbids
+leaves nothing, because the token is never emitted. Store `grammar_fingerprint`
+alongside whatever you log, so you can at least answer *what space did the model
+have* after the fact.
+
 ## The guard half
 
 A grammar generated last month, against a schema migrated last week, still
