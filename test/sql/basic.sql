@@ -99,5 +99,90 @@ SELECT approve('answer',
 SELECT count(*) AS breaks FROM check_grammar('answer',
     ARRAY[ROW('table', 'enum', catalog_tables(ARRAY['gg_test']), true)]::grammar_field[]);
 
+-- ------------------------------------------------- arrays and nesting (0.2) --
+-- The shape of a real tool call, which 0.1.0 could not express at all.
+SELECT grammar_for('[
+    {"name": "action", "kind": "enum", "values": ["select", "count"], "required": true},
+    {"name": "columns", "kind": "array", "required": true,
+     "items": {"kind": "enum", "values": ["id", "monto"]}},
+    {"name": "filter", "kind": "object", "required": false, "fields": [
+        {"name": "column", "kind": "enum", "values": ["id"], "required": true},
+        {"name": "op", "kind": "enum", "values": ["=", "<"], "required": true},
+        {"name": "value", "kind": "integer", "required": false}
+    ]}
+]'::jsonb);
+
+-- An array OF objects: two levels of recursion, which is where a hand-written
+-- nested case would have started disagreeing with the root.
+SELECT grammar_for('[
+    {"name": "edits", "kind": "array", "required": true, "items": {
+        "kind": "object", "fields": [
+            {"name": "path", "kind": "enum", "values": ["a.ts"], "required": true},
+            {"name": "text", "kind": "string", "required": true}
+        ]}}
+]'::jsonb);
+
+-- REGRESSION: arrays are bounded. An unbounded ( ... )* is a loop waiting to
+-- happen -- measured against a local 35B, an array of enum emitted
+-- ["id","id","id", ...] forty-one times until it ran out of budget, every token
+-- legal. A model stuck in that looks exactly like a model working, which is the
+-- worst thing a grammar can do. Default 16, overridable per field.
+SELECT grammar_for('[{"name": "xs", "kind": "array", "required": true, "max_items": 3,
+                     "items": {"kind": "enum", "values": ["a"]}}]'::jsonb);
+SELECT grammar_for('[{"name": "xs", "kind": "array", "required": true,
+                     "items": {"kind": "enum", "values": ["a"]}}]'::jsonb);
+SELECT grammar_for('[{"name": "xs", "kind": "array", "required": true, "max_items": 0,
+                     "items": {"kind": "enum", "values": ["a"]}}]'::jsonb);
+
+-- Refusals, each one preferred over compiling something subtly wrong.
+SELECT grammar_for('[{"name": "xs", "kind": "array", "required": true}]'::jsonb);
+SELECT grammar_for('[{"name": "o", "kind": "object", "required": true, "fields": []}]'::jsonb);
+SELECT grammar_for('[{"name": "o", "kind": "object", "required": true, "fields":
+    [{"name": "a", "kind": "string", "required": false}]}]'::jsonb);
+SELECT grammar_for('[{"name": "v", "kind": "enum", "values": [], "required": true}]'::jsonb);
+SELECT grammar_for('[]'::jsonb);
+SELECT grammar_for('[{"name": "v", "kind": "enum", "values": ["x"], "required": true}]'::jsonb, 'lark');
+
+-- The jsonb fingerprint ignores how the spec was written, which is what makes
+-- approve() usable: the same world approved twice must not read as drift.
+SELECT grammar_fingerprint('[{"name":"t","kind":"enum","values":["a"],"required":true}]'::jsonb)
+     = grammar_fingerprint('[{"kind":"enum","name":"t","required":true,"values":["a"]}]'::jsonb)
+       AS key_order_ignored;
+
+-- And the guard half works on the nested spec too, in both directions.
+SELECT count(*) AS breaks FROM check_grammar('nested',
+    '[{"name":"t","kind":"enum","values":["a"],"required":true}]'::jsonb);
+
+SELECT approve('nested', '[{"name":"t","kind":"enum","values":["a"],"required":true}]'::jsonb)
+       IS NOT NULL AS approved;
+
+SELECT count(*) AS breaks FROM check_grammar('nested',
+    '[{"name":"t","kind":"enum","values":["a"],"required":true}]'::jsonb);
+
+SELECT name, severity FROM check_grammar('nested',
+    '[{"name":"t","kind":"enum","values":["a","b"],"required":true}]'::jsonb);
+
 DROP SCHEMA gg_test CASCADE;
+DROP EXTENSION pg_grammar_guard CASCADE;
+
+-- ------------------------------------------------------------- the upgrade --
+-- The path that matters for anyone already on 0.1.0. Without this test the
+-- upgrade script could be broken and nobody would find out until a user ran it
+-- -- and the only alternative for them would be DROP + CREATE, which takes
+-- approved_grammars with it: exactly the baselines the guard half exists to keep.
+CREATE EXTENSION pg_grammar_guard VERSION '0.1.0';
+SELECT approve('survives', ARRAY[ROW('t', 'enum', ARRAY['a'], true)]::grammar_field[],
+               'gbnf', 'approved before the upgrade') IS NOT NULL AS approved_on_0_1_0;
+
+ALTER EXTENSION pg_grammar_guard UPDATE TO '0.2.0';
+SELECT extversion FROM pg_extension WHERE extname = 'pg_grammar_guard';
+
+-- The baseline is still there, and the flat API still answers.
+SELECT name, note FROM approved_grammars WHERE name = 'survives';
+SELECT count(*) AS breaks FROM check_grammar('survives',
+    ARRAY[ROW('t', 'enum', ARRAY['a'], true)]::grammar_field[]);
+
+-- And the new one answers too.
+SELECT grammar_for('[{"name":"v","kind":"enum","values":["x"],"required":true}]'::jsonb);
+
 DROP EXTENSION pg_grammar_guard CASCADE;
