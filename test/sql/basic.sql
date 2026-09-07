@@ -309,4 +309,25 @@ SELECT watch('survives',
              're-approved by hand after the 0.3.0 upgrade') > 0 AS rewatched;
 SELECT check_grammar('survives') AS watched_again;
 
+-- --------------------------------------------------- 0.3.0 -> 0.4.0 --
+-- watch() stops rebuilding the freeze-and-compare by hand. Assertions watched
+-- under 0.3.0 keep their stored check_sql and keep answering the same thing:
+-- the generated check is equivalent, not shared.
+ALTER EXTENSION pg_grammar_guard UPDATE TO '0.4.0';
+SELECT extversion FROM pg_extension WHERE extname = 'pg_grammar_guard';
+SELECT check_grammar('survives') AS still_answers_after_the_upgrade;
+
+-- And the new watch() behaves the same, in both directions.
+CREATE SCHEMA gg4;
+CREATE TABLE gg4.uno (id int);
+SELECT watch('on_0_4_0',
+             $q$select jsonb_build_array(jsonb_build_object(
+                    'name', 'table', 'kind', 'enum', 'required', true,
+                    'values', to_jsonb(grammar_guard.catalog_tables(ARRAY['gg4']))))$q$)
+       > 0 AS watched;
+SELECT check_grammar('on_0_4_0') AS unchanged;
+CREATE TABLE gg4.dos (id int);
+SELECT check_grammar('on_0_4_0') AS after_the_world_moved;
+DROP SCHEMA gg4 CASCADE;
+
 DROP EXTENSION pg_grammar_guard CASCADE;
