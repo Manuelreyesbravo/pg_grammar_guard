@@ -262,6 +262,24 @@ then optional ones. That is what keeps comma placement decidable, and it is why
 a set of fields where every field is optional is refused instead of being
 compiled into something subtly wrong.
 
+## Tested on
+
+Measured on 2026-09-16, not assumed: `make installcheck` was run against each
+of these releases, every one in a container of the official image for that
+version (19beta2 is a local build).
+
+| 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17 | 18 | 19 |
+|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|
+| ✗  | ✓  | ✓  | ✓  | ✓  | ✓  | ✓  | ✓  | ✓  | ✓  |
+
+11 and 12 arrived with 0.4.1.  Before that, `catalog_columns()` and
+`catalog_enum()` aggregated a `name` column into an array while declaring
+`text[]`, which only 13 and later accept; every call raised "return type
+mismatch" on 12 and earlier.
+
+PostgreSQL 10 is out because pg_living_assertions, which this extension needs,
+requires 11.
+
 ## Install
 
 ```
