@@ -16,6 +16,9 @@ RETURNS text[]
 LANGUAGE sql STABLE
 SET search_path = pg_catalog
 AS $$
+    -- attname is `name`, and only PostgreSQL 13 and later will accept a
+    -- name[] where the function declares text[].  The cast costs nothing and
+    -- makes the function work back to 10.
     SELECT coalesce(array_agg(a.attname::text ORDER BY a.attnum), '{}')
       FROM pg_attribute a
      WHERE a.attrelid = p_table

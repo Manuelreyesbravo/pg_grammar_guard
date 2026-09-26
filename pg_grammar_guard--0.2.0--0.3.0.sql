@@ -86,3 +86,10 @@ SET search_path = grammar_guard, pg_catalog
 AS $$
     SELECT (living_assertions.run('grammar:' || p_name)).state;
 $$;
+
+COMMENT ON FUNCTION check_grammar(text) IS
+    'Re-checks one watched grammar now and returns its state. holds, broken, '
+    'unknown, erroring -- and living_assertions.state() additionally answers '
+    'unchecked, retired and unregistered, which is where 0.2.0''s never_approved '
+    'severity went: it was this same distinction, solved once instead of four '
+    'times.';
