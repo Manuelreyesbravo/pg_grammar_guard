@@ -1,0 +1,10 @@
+# Objects that ci/upgrade_check.sh expects only after an upgrade, never in a
+# fresh install.  One extended regex per line, matched against the start of
+# the member description.
+#
+# Upgrading from 0.2.0 keeps the baselines approved under 0.2.0 in this
+# table, renamed, because they cannot be re-checked and dropping them would
+# destroy the only record of what somebody approved (see
+# pg_grammar_guard--0.2.0--0.3.0.sql).  A fresh install has nothing to keep.
+table grammar_guard\.baselines_from_0_2_0 
+type grammar_guard\.baselines_from_0_2_0
