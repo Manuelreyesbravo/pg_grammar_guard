@@ -1,5 +1,7 @@
 # pg_grammar_guard
 
+[![CI](https://github.com/Manuelreyesbravo/pg_grammar_guard/actions/workflows/ci.yml/badge.svg)](https://github.com/Manuelreyesbravo/pg_grammar_guard/actions/workflows/ci.yml)
+
 Compiles a **token-level grammar from your live catalog**, so a constrained model
 cannot name a table, a column or a value that does not exist — and tells you when
 a grammar you approved stopped describing your database.
