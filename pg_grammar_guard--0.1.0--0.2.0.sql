@@ -1,3 +1,6 @@
+-- Copyright 2026 Manuel Reyes Bravo
+-- SPDX-License-Identifier: PostgreSQL
+
 -- pg_grammar_guard 0.1.0 -> 0.2.0
 --
 -- Adds arrays and nesting. 0.1.0 could only describe a flat object of scalars,

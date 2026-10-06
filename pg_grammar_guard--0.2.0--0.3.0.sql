@@ -1,3 +1,6 @@
+-- Copyright 2026 Manuel Reyes Bravo
+-- SPDX-License-Identifier: PostgreSQL
+
 -- pg_grammar_guard 0.2.0 -> 0.3.0
 --
 -- The guard half moves to pg_living_assertions.

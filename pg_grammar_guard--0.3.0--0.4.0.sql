@@ -1,3 +1,6 @@
+-- Copyright 2026 Manuel Reyes Bravo
+-- SPDX-License-Identifier: PostgreSQL
+
 -- pg_grammar_guard 0.3.0 -> 0.4.0
 --
 -- watch() stops rebuilding the freeze-and-compare by hand and calls

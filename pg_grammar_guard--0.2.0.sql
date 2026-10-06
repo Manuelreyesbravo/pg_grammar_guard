@@ -1,3 +1,6 @@
+-- Copyright 2026 Manuel Reyes Bravo
+-- SPDX-License-Identifier: PostgreSQL
+
 -- pg_grammar_guard 0.2.0
 --
 -- Compiles a token-level grammar from the live catalog, so a constrained model

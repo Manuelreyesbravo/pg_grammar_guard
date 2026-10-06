@@ -1,3 +1,6 @@
+-- Copyright 2026 Manuel Reyes Bravo
+-- SPDX-License-Identifier: PostgreSQL
+
 -- pg_grammar_guard 0.3.0
 --
 -- 0.3.0 moves the guard half out. Approving a baseline, detecting drift and

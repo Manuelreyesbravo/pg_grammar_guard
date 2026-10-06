@@ -1,3 +1,6 @@
+-- Copyright 2026 Manuel Reyes Bravo
+-- SPDX-License-Identifier: PostgreSQL
+
 -- pg_grammar_guard 0.4.0 -> 0.4.1
 --
 -- No behaviour changes.  Both functions aggregated a `name` column into an

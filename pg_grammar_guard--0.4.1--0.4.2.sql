@@ -1,3 +1,6 @@
+-- Copyright 2026 Manuel Reyes Bravo
+-- SPDX-License-Identifier: PostgreSQL
+
 -- pg_grammar_guard 0.4.1 -> 0.4.2
 --
 -- No schema change. This release adds project governance and legal files
