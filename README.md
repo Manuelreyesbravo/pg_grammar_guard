@@ -319,4 +319,6 @@ wrong. That is the boundary of what a grammar buys.
 
 ## Licence
 
-PostgreSQL Licence.
+PostgreSQL Licence -- see [LICENSE](LICENSE). Copyright 2026 Manuel Reyes Bravo.
+
+The name is not licensed with the code: see [TRADEMARK.md](TRADEMARK.md).
