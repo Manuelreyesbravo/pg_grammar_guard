@@ -347,7 +347,7 @@ SELECT grammar_for('[{"name": "xs", "kind": "array", "required": true,
 
 SELECT grammar_for('[{"name": "xs", "kind": "array", "required": true, "max_items": 0,
                      "items": {"kind": "enum", "values": ["a"]}}]'::jsonb);
-ERROR:  field xs: max_items must be >= 1
+ERROR:  field xs: max_items must be between 1 and 1000
 -- min_items exists because the measurement found real arrays of length ZERO.
 -- Requiring one element would make a legitimate empty list unreachable -- the
 -- same failure as an unbounded array, in the other direction.

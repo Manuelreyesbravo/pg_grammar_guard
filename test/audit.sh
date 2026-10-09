@@ -9,6 +9,9 @@
 #         the grammar offered another table's columns, and drift in "Clientes" read holds.
 #   GG-04 catalog_tables() was not ordered: churn in pg_class moved the fingerprint of a
 #         watch with no schema change, a false broken.
+#   GG-08..GG-18 (0.4.8): an empty correlated pivot, NULL grammars, fingerprint collisions, other
+#         sessions' temporary tables, a spec that disappears, the watch's own path, unbounded
+#         max_items, a quadratic enum build, a NULL dialect, duplicate and unnamed fields.
 #   GG-03 a watch() declared by one role ran with the rights of whoever ran check_grammar().
 #         Closed by pg_living_assertions 0.5.8, where a check runs as the role that declared
 #         it; this suite needs that version (LIVING_ASSERTIONS_DIR, see test/cluster.sh).
@@ -101,6 +104,63 @@ q -q -c "grant usage on schema grammar_guard, living_assertions to $TENANT" \
 qt -q -c "select grammar_guard.watch('who', \$\$select jsonb_build_array(jsonb_build_object('name', 'who', 'kind', 'enum', 'required', true, 'values', jsonb_build_array(current_user::text)))\$\$)" >/dev/null
 check "control: run by its author, the watch holds" "holds" "$(qt -c "select grammar_guard.check_grammar('who')")"
 check "run by the superuser, it still runs as its author" "holds" "$(q -c "select grammar_guard.check_grammar('who')")"
+
+echo "GG-08: an empty correlated pivot is refused"
+check "control: an empty plain enum is refused" "enum with no values" \
+    "$(q -c "select grammar_guard.grammar_for('[{\"name\":\"t\",\"kind\":\"enum\",\"required\":true,\"values\":[]}]')")"
+check "an empty correlated pivot is refused too" "enum with no values" \
+    "$(q -c "select grammar_guard.grammar_for(jsonb_build_array(grammar_guard.catalog_correlated(array[]::text[])))")"
+
+echo "GG-10: never a NULL grammar"
+check "an enum value NULL is refused" "none NULL" \
+    "$(q -c "select grammar_guard.grammar_for('[{\"name\":\"a\",\"kind\":\"enum\",\"required\":true,\"values\":[\"x\",null]}]')")"
+check "a field without a name is refused" "non-empty name" \
+    "$(q -c "select grammar_guard.grammar_for('[{\"kind\":\"string\",\"required\":true}]')")"
+check "a NULL value in grammar_for_json is refused" "an enum value is NULL" \
+    "$(q -c "select grammar_guard.grammar_for_json(array[row('a','enum',array['x',null],true)]::grammar_guard.grammar_field[])")"
+
+echo "GG-11: different grammars, different fingerprints"
+check "a separator inside a value does not collide" "differ=true" \
+    "$(q -c "select 'differ=' || (grammar_guard.grammar_fingerprint(array[row('m','enum',array['a','b'],true)]::grammar_guard.grammar_field[]) <> grammar_guard.grammar_fingerprint(array[row('m','enum',array[E'a\u0002b'],true)]::grammar_guard.grammar_field[]))")"
+check "a NULL element does not vanish" "differ=true" \
+    "$(q -c "select 'differ=' || (grammar_guard.grammar_fingerprint(array[row('m','enum',array['a'],true)]::grammar_guard.grammar_field[]) <> grammar_guard.grammar_fingerprint(array[row('m','enum',array['a',null],true)]::grammar_guard.grammar_field[]))")"
+
+echo "GG-12: another session's temporary table is not the catalog"
+check "a temporary table of this session is not listed" "listed=false" \
+    "$(q -c "create temp table scratch_secret_plan (x int)" -c "select 'listed=' || (array_to_string(grammar_guard.catalog_tables(null), ',') like '%scratch_secret_plan%')" | tail -1)"
+
+echo "GG-14: the spec resolves with its author's path"
+q -q -c "create schema app3" -c "create table app3.invoices (id int, amount numeric)" >/dev/null
+check "an unqualified name resolves in the author's schema" "watched" \
+    "$(q -c "set search_path = app3, public" -c "select 'watched' from grammar_guard.watch('inv', \$\$select to_jsonb(grammar_guard.catalog_columns('invoices'::regclass))\$\$)" | tail -1)"
+q -q -c "set search_path = app3, public" -c "create temp table invoices (id int, amount numeric, ghost text)" \
+     -c "select grammar_guard.watch('inv_decoy', \$\$select to_jsonb(grammar_guard.catalog_columns('invoices'::regclass))\$\$)" >/dev/null 2>&1
+check "  ...and a temporary decoy in the approving session is not what was approved (checked from a session without it)" "holds" \
+    "$(q -c "select grammar_guard.check_grammar('inv_decoy')")"
+
+echo "GG-13: a spec that disappears is broken"
+q -q -c "create schema app5" -c "create table app5.a (x int)" \
+     -c "select grammar_guard.watch('app5', \$\$select jsonb_agg(c.relname order by c.relname) from pg_class c where c.relnamespace = 'app5'::regnamespace and c.relkind = 'r'\$\$)" >/dev/null
+check "control: it holds" "holds" "$(q -c "select grammar_guard.check_grammar('app5')")"
+check "with every table dropped, it is broken" "broken" "$(q -c "drop table app5.a" -c "select grammar_guard.check_grammar('app5')" | tail -1)"
+
+echo "GG-15, GG-17, GG-18: bounds and validation"
+check "max_items beyond 1000 is refused" "between 1 and 1000" \
+    "$(q -c "select grammar_guard.grammar_for('[{\"name\":\"a\",\"kind\":\"array\",\"required\":true,\"max_items\":2147483647,\"items\":{\"kind\":\"enum\",\"values\":[\"x\"]}}]')")"
+check "max_items that is not a whole number is a clear error" "whole numbers" \
+    "$(q -c "select grammar_guard.grammar_for('[{\"name\":\"a\",\"kind\":\"array\",\"required\":true,\"max_items\":\"3.5\",\"items\":{\"kind\":\"enum\",\"values\":[\"x\"]}}]')")"
+check "a NULL dialect is refused in grammar_for_json" "unknown dialect" \
+    "$(q -c "select grammar_guard.grammar_for_json(array[row('a','enum',array['x'],true)]::grammar_guard.grammar_field[], null)")"
+check "a NULL dialect is refused in grammar_for" "unknown dialect" \
+    "$(q -c "select grammar_guard.grammar_for('[{\"name\":\"a\",\"kind\":\"string\",\"required\":true}]', null)")"
+check "two fields with the same name are refused" "same name" \
+    "$(q -c "select grammar_guard.grammar_for('[{\"name\":\"a\",\"kind\":\"string\",\"required\":true},{\"name\":\"a\",\"kind\":\"string\",\"required\":true}]')")"
+check "a required that is not a boolean is refused" "true or false" \
+    "$(q -c "select grammar_guard.grammar_for('[{\"name\":\"a\",\"kind\":\"string\",\"required\":\"maybe\"}]')")"
+
+echo "GG-16: a large enum builds in linear time"
+check "40,000 values within 3 seconds" "built" \
+    "$(q -c "set statement_timeout = '3s'" -c "select 'built' where length(grammar_guard.grammar_for(jsonb_build_array(jsonb_build_object('name','a','kind','enum','required',true,'values',(select jsonb_agg('v' || g) from generate_series(1, 40000) g))))) > 0" | tail -1)"
 
 if [ "$failures" -ne 0 ]; then
     echo "$failures check(s) failed"

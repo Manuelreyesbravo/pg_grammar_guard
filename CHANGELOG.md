@@ -4,6 +4,32 @@ Versions are released on [PGXN](https://pgxn.org/dist/pg_grammar_guard/). Each
 upgrade script (`pg_grammar_guard--OLD--NEW.sql`) documents, in its own header,
 exactly what changed and why; that is the authoritative per-version record.
 
+## 0.4.8 -- 2026-10-09
+
+The Medium and Low findings of the external audit of 0.4.5 left open, each measured on 0.4.7
+first (`test/audit.sh`: every tooth red there with its control green).
+
+* **GG-08:** a correlated pivot with no values is refused; it compiled to `root ::=`.
+* **GG-10: never a NULL grammar.** A NULL value, a field without a name or a NULL pivot made the
+  grammar NULL, which a client reads as "unconstrained". Refused.
+* **GG-11:** `grammar_fingerprint(grammar_field[])` hashes the canonical JSON; separators inside a
+  value and dropped NULLs made two grammars share a fingerprint. A stored one changes once.
+* **GG-12:** `catalog_tables()` no longer lists other sessions' temporary tables, which let any
+  role with TEMP make a whole-database watch read `broken`.
+* **GG-13:** a spec that comes out NULL is `broken`, through pg_living_assertions 0.5.9, which
+  this version requires.
+* **GG-14: the spec resolves with its author's path.** `watch()` kept its own, so an unqualified
+  name ignored the author's schema and could only resolve in `pg_temp`.
+* **GG-15:** `max_items` is at most 1000, and a value that is not a whole number is a clear error.
+* **GG-16:** an enum of 40,000 values builds in linear time; it took 10 s.
+* **GG-17:** a NULL dialect is refused.
+* **GG-18:** duplicate field names, an empty name, a non-boolean `required` and non-string
+  values are refused.
+* GG-05 (whoever may run a check may insert a row in its history) stays as it is: the fix the
+  audit suggests, a SECURITY DEFINER `run()`, would stop checks from running as their author.
+  Since pg_living_assertions 0.5.9 such a row is dated by the server and lasts until the next
+  honest check. GG-07 is closed in pg_living_assertions 0.5.9.
+
 ## 0.4.7 -- 2026-10-09
 
 From an external audit of 0.4.5, each finding measured on 0.4.6 before it was changed

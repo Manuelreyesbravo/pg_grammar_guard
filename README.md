@@ -307,6 +307,11 @@ rights of whoever called the extension -- a superuser, in the external audit.
 Path order alone does not stop that: PostgreSQL picks the best-matching overload
 whatever schema it lives in.
 
+Since 0.4.8 `watch()` keeps no path of its own: the spec is resolved with its
+author's `search_path`, recorded with the assertion and applied with `pg_temp`
+last -- at approval too, so a temporary table of the approving session is not what
+gets approved. Qualifying names in a spec is still the robust way to write one.
+
 A watch runs as the role that declared it, through pg_living_assertions 0.5.8:
 a role you let call `watch()` can make a check read only what it can read
 itself, not what the role running `check_grammar()` can.
