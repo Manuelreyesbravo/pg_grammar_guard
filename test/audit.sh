@@ -5,8 +5,8 @@
 #   GG-01 every function searched grammar_guard BEFORE pg_catalog, and CREATE EXTENSION used
 #         a grammar_guard schema someone else had created: its owner's to_json() or md5()
 #         ran in place of pg_catalog's, as whoever called -- a superuser, measured.
-#   GG-02 catalog_tables() returned schema.name unquoted, so "Clientes" resolved to clientes:
-#         the grammar offered another table's columns, and drift in "Clientes" read holds.
+#   GG-02 catalog_tables() returned schema.name unquoted, so "Customers" resolved to customers:
+#         the grammar offered another table's columns, and drift in "Customers" read holds.
 #   GG-04 catalog_tables() was not ordered: churn in pg_class moved the fingerprint of a
 #         watch with no schema change, a false broken.
 #   GG-08..GG-18 (0.4.8): an empty correlated pivot, NULL grammars, fingerprint collisions, other
@@ -22,8 +22,8 @@ set -euo pipefail
 
 PG_CONFIG=${PG_CONFIG:-pg_config}
 PSQL=${PSQL:-$("$PG_CONFIG" --bindir)/psql}
-RAIZ=$(cd "$(dirname "$0")/.." && pwd)
-export PGHOST=${PGHOST:-$RAIZ/.testcluster} PGPORT=${PGPORT:-5494}
+ROOT=$(cd "$(dirname "$0")/.." && pwd)
+export PGHOST=${PGHOST:-$ROOT/.testcluster} PGPORT=${PGPORT:-5494}
 DB=grammar_guard_test_audit
 SQUAT=grammar_guard_test_audit_squat
 TENANT=grammar_guard_test_audit_tenant
@@ -77,15 +77,15 @@ check "every function of the extension searches pg_catalog first" "functions_wit
     "$(q -c "select 'functions_with_pg_catalog_first=' || case when bool_and(array_to_string(proconfig, ',') like 'search_path=pg_catalog%') then 'all' else 'not all' end from pg_proc where pronamespace = 'grammar_guard'::regnamespace")"
 
 echo "GG-02: a table with capitals is its own table"
-q -q -c "create schema app4" -c "create table app4.clientes (id int, rut text)" \
-     -c "create table app4.\"Clientes\" (\"ID\" int, \"Nombre\" text)" >/dev/null
+q -q -c "create schema app4" -c "create table app4.customers (id int, tax_id text)" \
+     -c "create table app4.\"Customers\" (\"ID\" int, \"Name\" text)" >/dev/null
 check "control: both tables are listed" "2" \
     "$(q -c "select cardinality(grammar_guard.catalog_tables(array['app4']))")"
-check "\"Clientes\" is offered its own columns" "Nombre" \
+check "\"Customers\" is offered its own columns" "Name" \
     "$(q -c "select grammar_guard.catalog_correlated(grammar_guard.catalog_tables(array['app4'])) -> 'dependents' -> 0 -> 'by_value'")"
 q -q -c "select grammar_guard.watch('app4', \$\$select grammar_guard.catalog_correlated(grammar_guard.catalog_tables(array['app4']))\$\$)" \
-     -c "alter table app4.\"Clientes\" add column \"Tarjeta\" text" >/dev/null
-check "drift in \"Clientes\" reads broken" "broken" "$(q -c "select grammar_guard.check_grammar('app4')")"
+     -c "alter table app4.\"Customers\" add column \"Card\" text" >/dev/null
+check "drift in \"Customers\" reads broken" "broken" "$(q -c "select grammar_guard.check_grammar('app4')")"
 
 echo "GG-04: the same tables are the same list, whatever pg_class's physical order"
 q -q -c "create schema ord" -c "create table ord.zeta (a int)" -c "create table ord.mid (a int)" \

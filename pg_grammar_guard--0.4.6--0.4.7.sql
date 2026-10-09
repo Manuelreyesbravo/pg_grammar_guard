@@ -14,8 +14,8 @@
 --     it is in, so a to_json(text) beats pg_catalog.to_json(anyelement) from any position.
 --     The install now refuses a schema owned by a role that is neither the installer nor a
 --     superuser, and every function searches pg_catalog first.
---   * GG-02: catalog_tables() returned schema.name unquoted, so "Clientes" was read back as
---     clientes: the grammar offered another table's columns, and drift in "Clientes" read
+--   * GG-02: catalog_tables() returned schema.name unquoted, so "Customers" was read back as
+--     customers: the grammar offered another table's columns, and drift in "Customers" read
 --     holds. Names are quoted as identifiers now (format('%I.%I')); a lower-case name comes
 --     out exactly as before, so no existing fingerprint of such tables changes.
 --   * GG-04: catalog_tables() was not ordered: `ORDER BY 1` inside an aggregate orders by the

@@ -25,13 +25,13 @@ set -euo pipefail
 
 PG_CONFIG=${PG_CONFIG:-pg_config}
 PSQL=${PSQL:-$("$PG_CONFIG" --bindir)/psql}
-RAIZ=$(cd "$(dirname "$0")/.." && pwd)
-export PGHOST=${PGHOST:-$RAIZ/.testcluster} PGPORT=${PGPORT:-5494}
-BASE=grammar_guard_test_pg_temp
+ROOT=$(cd "$(dirname "$0")/.." && pwd)
+export PGHOST=${PGHOST:-$ROOT/.testcluster} PGPORT=${PGPORT:-5494}
+DB=grammar_guard_test_pg_temp
 OTHER=grammar_guard_test_pg_temp_other
 failures=0
 
-for what in "database:$BASE" "role:$OTHER"; do
+for what in "database:$DB" "role:$OTHER"; do
     kind=${what%%:*}; name=${what#*:}
     q="select 1 from pg_database where datname = '$name'"
     [ "$kind" = role ] && q="select 1 from pg_roles where rolname = '$name'"
@@ -40,10 +40,10 @@ for what in "database:$BASE" "role:$OTHER"; do
         exit 2
     fi
 done
-trap '$PSQL -X -d postgres -qc "drop database if exists $BASE" -c "drop role if exists $OTHER" >/dev/null 2>&1 || true' EXIT
-$PSQL -X -d postgres -qc "create database $BASE" -c "create role $OTHER login"
+trap '$PSQL -X -d postgres -qc "drop database if exists $DB" -c "drop role if exists $OTHER" >/dev/null 2>&1 || true' EXIT
+$PSQL -X -d postgres -qc "create database $DB" -c "create role $OTHER login"
 
-$PSQL -X -d "$BASE" -q -v ON_ERROR_STOP=1 -v other="$OTHER" >/dev/null <<'SQL'
+$PSQL -X -d "$DB" -q -v ON_ERROR_STOP=1 -v other="$OTHER" >/dev/null <<'SQL'
 CREATE EXTENSION pg_grammar_guard CASCADE;
 CREATE SCHEMA app;
 CREATE TABLE app.orders (id int, total numeric);
@@ -76,16 +76,16 @@ check() {
 }
 
 check "without a temporary table, the unapproved column reads as drift" "broken" \
-    "$(PGUSER=$OTHER $PSQL -X -d "$BASE" -tAc "select evaluate('grammar:orders')" 2>&1 || true)"
+    "$(PGUSER=$OTHER $PSQL -X -d "$DB" -tAc "select evaluate('grammar:orders')" 2>&1 || true)"
 
 # THE CASE: the same session keeps a copy of pg_attribute without the new column.
 check "a temporary pg_attribute in the evaluating session does NOT hide the drift" "broken" \
-    "$(PGUSER=$OTHER $PSQL -X -d "$BASE" -tA \
+    "$(PGUSER=$OTHER $PSQL -X -d "$DB" -tA \
         -c "create temp table pg_attribute as select attrelid, attname, attnum, attisdropped from pg_catalog.pg_attribute where not (attrelid = 'app.orders'::regclass and attname = 'secret')" \
         -c "select evaluate('grammar:orders')" 2>&1 || true)"
 
 check "and the owner, in its own session, still sees the drift" "broken" \
-    "$($PSQL -X -d "$BASE" -tAc "select grammar_guard.check_grammar('orders')" 2>&1 || true)"
+    "$($PSQL -X -d "$DB" -tAc "select grammar_guard.check_grammar('orders')" 2>&1 || true)"
 
 if [ "$failures" -ne 0 ]; then
     echo "$failures check(s) failed"

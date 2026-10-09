@@ -14,25 +14,25 @@ CREATE EXTENSION pg_grammar_guard CASCADE;
 SET search_path = grammar_guard, public;
 
 CREATE SCHEMA gg_test;
-CREATE TABLE gg_test.clientes (id int, rut text, nombre text);
-CREATE TABLE gg_test.facturas (id int, cliente_id int, monto numeric);
-CREATE VIEW  gg_test.vigentes AS SELECT * FROM gg_test.facturas;
-CREATE TYPE  gg_test.estado AS ENUM ('abierta', 'pagada', 'anulada');
+CREATE TABLE gg_test.customers (id int, tax_id text, name text);
+CREATE TABLE gg_test.invoices (id int, customer_id int, amount numeric);
+CREATE VIEW  gg_test.open_invoices AS SELECT * FROM gg_test.invoices;
+CREATE TYPE  gg_test.status AS ENUM ('open', 'paid', 'void');
 
 -- ---------------------------------------------------------------- sources --
 SELECT catalog_tables(ARRAY['gg_test']);
-SELECT catalog_columns('gg_test.clientes');
-SELECT catalog_enum('gg_test.estado');
+SELECT catalog_columns('gg_test.customers');
+SELECT catalog_enum('gg_test.status');
 
 -- A dropped column must disappear from the columns and therefore from the
 -- grammar. This is the whole premise: the grammar tracks the catalog.
-ALTER TABLE gg_test.clientes DROP COLUMN rut;
-SELECT catalog_columns('gg_test.clientes');
+ALTER TABLE gg_test.customers DROP COLUMN tax_id;
+SELECT catalog_columns('gg_test.customers');
 
 -- ------------------------------------------------------------- generation --
 SELECT grammar_for_json(ARRAY[
     ROW('table',  'enum', catalog_tables(ARRAY['gg_test']), true),
-    ROW('column', 'enum', catalog_columns('gg_test.facturas'), true),
+    ROW('column', 'enum', catalog_columns('gg_test.invoices'), true),
     ROW('limit',  'integer', NULL, false)
 ]::grammar_field[]);
 
@@ -103,7 +103,7 @@ SELECT check_grammar('answer') AS unchanged;
 -- The world moves. Nobody re-supplies the spec: the stored check rebuilds it
 -- from the catalog, which is what makes this runnable by a cron job or a deploy
 -- gate instead of only by whoever approved it.
-CREATE TABLE gg_test.pagos (id int);
+CREATE TABLE gg_test.payments (id int);
 
 SELECT check_grammar('answer') AS after_the_world_moved;
 
@@ -142,7 +142,7 @@ SELECT name, last_state_before, what_happened
 SELECT grammar_for('[
     {"name": "action", "kind": "enum", "values": ["select", "count"], "required": true},
     {"name": "columns", "kind": "array", "required": true,
-     "items": {"kind": "enum", "values": ["id", "monto"]}},
+     "items": {"kind": "enum", "values": ["id", "amount"]}},
     {"name": "filter", "kind": "object", "required": false, "fields": [
         {"name": "column", "kind": "enum", "values": ["id"], "required": true},
         {"name": "op", "kind": "enum", "values": ["=", "<"], "required": true},
@@ -184,42 +184,42 @@ SELECT grammar_for('[{"name": "xs", "kind": "array", "required": true, "min_item
 
 -- --------------------------------------------------------- correlation --
 -- The canonical case, and the reason this extension exists: without it a
--- grammar permits {"table":"facturas","column":"nombre"} where nombre belongs
--- to clientes -- well formed and impossible.
+-- grammar permits {"table":"invoices","column":"name"} where name belongs
+-- to customers -- well formed and impossible.
 SELECT grammar_for(jsonb_build_array(
-    catalog_correlated(ARRAY['gg_test.clientes', 'gg_test.facturas'])));
+    catalog_correlated(ARRAY['gg_test.customers', 'gg_test.invoices'])));
 
 -- Built straight from the catalog, so it tracks a dropped column like the rest.
-SELECT (catalog_correlated(ARRAY['gg_test.clientes'])
-        -> 'dependents' -> 0 -> 'by_value' -> 'gg_test.clientes') AS columnas_de_clientes;
+SELECT (catalog_correlated(ARRAY['gg_test.customers'])
+        -> 'dependents' -> 0 -> 'by_value' -> 'gg_test.customers') AS customer_columns;
 
 -- With another required field alongside: it is shared between branches and its
 -- rule is emitted once, not once per pivot value.
 SELECT grammar_for(jsonb_build_array(
-    catalog_correlated(ARRAY['gg_test.clientes', 'gg_test.facturas']),
+    catalog_correlated(ARRAY['gg_test.customers', 'gg_test.invoices']),
     jsonb_build_object('name','limit','kind','integer','required',true)));
 
 -- Refusals specific to correlation.
--- El pivote no puede ser opcional.
+-- The pivot cannot be optional.
 SELECT grammar_for('[{"name":"t","kind":"enum","values":["a"],"required":false,
     "dependents":[{"name":"c","kind":"enum","required":true,"by_value":{"a":["x"]}}]}]'::jsonb);
 
--- Un valor del pivote sin columnas legales haria esa rama insatisfacible: el
--- modelo puede entrar y quedarse sin ningun token legal.
+-- A pivot value with no legal columns would make that branch unsatisfiable: the
+-- model could enter it and be left with no legal token.
 SELECT grammar_for('[{"name":"t","kind":"enum","values":["a","b"],"required":true,
     "dependents":[{"name":"c","kind":"enum","required":true,"by_value":{"a":["x"]}}]}]'::jsonb);
 
--- Dos pivotes pediria una alternativa por COMBINACION -- la explosion que la
--- gente espera de esto y que no ocurre, justamente porque se rechaza.
+-- Two pivots would need one alternative per COMBINATION -- the explosion people
+-- expect from this, and that does not happen precisely because it is refused.
 SELECT grammar_for('[{"name":"t","kind":"enum","values":["a"],"required":true,
      "dependents":[{"name":"c","kind":"enum","required":true,"by_value":{"a":["x"]}}]},
     {"name":"u","kind":"enum","values":["a"],"required":true,
      "dependents":[{"name":"d","kind":"enum","required":true,"by_value":{"a":["y"]}}]}]'::jsonb);
 
--- Y un dependiente declarado DOS veces. Este caso existe por el defecto que lo
--- destapo: la primera version emitia el pivote sin sus dependientes cuando no
--- estaban tambien en fields, y salia una gramatica valida a la que le FALTABA un
--- campo. Nada fallaba; el objeto simplemente venia corto.
+-- And a dependent declared TWICE. This case exists because of the defect that
+-- exposed it: the first version emitted the pivot without its dependents when they
+-- were not also in fields, and out came a valid grammar that was MISSING a
+-- field. Nothing failed; the object simply came out short.
 SELECT grammar_for('[{"name":"t","kind":"enum","values":["a"],"required":true,
      "dependents":[{"name":"c","kind":"enum","required":true,"by_value":{"a":["x"]}}]},
     {"name":"c","kind":"enum","values":["x"],"required":true}]'::jsonb);
@@ -319,14 +319,14 @@ SELECT check_grammar('survives') AS still_answers_after_the_upgrade;
 
 -- And the new watch() behaves the same, in both directions.
 CREATE SCHEMA gg4;
-CREATE TABLE gg4.uno (id int);
+CREATE TABLE gg4.one (id int);
 SELECT watch('on_0_4_0',
              $q$select jsonb_build_array(jsonb_build_object(
                     'name', 'table', 'kind', 'enum', 'required', true,
                     'values', to_jsonb(grammar_guard.catalog_tables(ARRAY['gg4']))))$q$)
        > 0 AS watched;
 SELECT check_grammar('on_0_4_0') AS unchanged;
-CREATE TABLE gg4.dos (id int);
+CREATE TABLE gg4.two (id int);
 SELECT check_grammar('on_0_4_0') AS after_the_world_moved;
 DROP SCHEMA gg4 CASCADE;
 

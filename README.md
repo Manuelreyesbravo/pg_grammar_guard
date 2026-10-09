@@ -11,20 +11,20 @@ CREATE EXTENSION pg_grammar_guard;
 
 SELECT grammar_guard.grammar_for_json(ARRAY[
     ROW('table',  'enum', grammar_guard.catalog_tables(ARRAY['app']), true),
-    ROW('column', 'enum', grammar_guard.catalog_columns('app.clientes'), true),
+    ROW('column', 'enum', grammar_guard.catalog_columns('app.customers'), true),
     ROW('limit',  'integer', NULL, false)
 ]::grammar_guard.grammar_field[]);
 ```
 ```
 root ::= "{" ws "\"table\"" ws ":" ws f1-table ws "," ws "\"column\"" ws ":" ws f2-column ws ( "," ws "\"limit\"" ws ":" ws f3-limit ws )? "}"
-f1-table ::= "\"app.clientes\"" | "\"app.facturas\""
-f2-column ::= "\"id\"" | "\"rut\"" | "\"nombre\""
+f1-table ::= "\"app.customers\"" | "\"app.invoices\""
+f2-column ::= "\"id\"" | "\"tax_id\"" | "\"name\""
 f3-limit ::= integer
 ...
 ```
 
 Feed that to `llama.cpp` (`grammar`), or to anything built on llguidance or
-XGrammar. The model is now **unable** to emit `app.clientes.email` when there is
+XGrammar. The model is now **unable** to emit `app.customers.email` when there is
 no such column. Not corrected afterwards — unable.
 
 ## The failure it exists for
@@ -66,7 +66,7 @@ Real tool calls are not flat. `grammar_for` takes a JSON spec and recurses:
 SELECT grammar_guard.grammar_for('[
   {"name": "action",  "kind": "enum", "values": ["select","count"], "required": true},
   {"name": "columns", "kind": "array", "required": true, "max_items": 3,
-   "items": {"kind": "enum", "values": ["id","monto"]}},
+   "items": {"kind": "enum", "values": ["id","amount"]}},
   {"name": "filter",  "kind": "object", "required": false, "fields": [
      {"name": "column", "kind": "enum", "values": ["id"], "required": true},
      {"name": "op",     "kind": "enum", "values": ["=","<"], "required": true}]}
@@ -190,21 +190,21 @@ users.
 A flat grammar happily permits this:
 
 ```json
-{"table": "facturas", "column": "nombre"}
+{"table": "invoices", "column": "name"}
 ```
 
-where `nombre` belongs to `clientes`. **Well formed and impossible** — exactly what
+where `name` belongs to `customers`. **Well formed and impossible** — exactly what
 this extension exists to make unreachable. One call builds it from the catalog:
 
 ```sql
 SELECT grammar_guard.grammar_for(jsonb_build_array(
-    grammar_guard.catalog_correlated(ARRAY['app.clientes', 'app.facturas'])));
+    grammar_guard.catalog_correlated(ARRAY['app.customers', 'app.invoices'])));
 ```
 ```
-root ::= "{" ws "\"table\"" ws ":" ws "\"app.clientes\""  ws "," … root-v0-d0 ws "}"
-       | "{" ws "\"table\"" ws ":" ws "\"app.facturas\"" ws "," … root-v1-d0 ws "}"
-root-v0-d0 ::= "\"id\"" | "\"rut\"" | "\"nombre\""
-root-v1-d0 ::= "\"id\"" | "\"cliente_id\"" | "\"monto\""
+root ::= "{" ws "\"table\"" ws ":" ws "\"app.customers\""  ws "," … root-v0-d0 ws "}"
+       | "{" ws "\"table\"" ws ":" ws "\"app.invoices\"" ws "," … root-v1-d0 ws "}"
+root-v0-d0 ::= "\"id\"" | "\"tax_id\"" | "\"name\""
+root-v1-d0 ::= "\"id\"" | "\"customer_id\"" | "\"amount\""
 ```
 
 One alternative per table, so the legal columns are chosen by the token the model
@@ -215,7 +215,7 @@ but not in that table, a local 35B could not produce it:
 |---|---|
 | `path` from `public.projects` | `{"table":"public.projects","column":"path"}` |
 | **`db_connection` from `public.nodes`** — it is a column of `projects` | `{"table":"public.nodes","column":"id"}` |
-| `inventada_xyz` from `public.projects` | `{"table":"public.projects","column":"id"}` |
+| `invented_xyz` from `public.projects` | `{"table":"public.projects","column":"id"}` |
 
 Only **one** field per object may carry dependents. Two would need an alternative
 per *combination*, which is the exponential blowup people expect here — it is

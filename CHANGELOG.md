@@ -42,8 +42,8 @@ with its control green).
   that is neither the installer nor a superuser, and every function searches
   `pg_catalog` first.
 * **GG-02: a table with capitals is its own table.** `catalog_tables()` returned names
-  unquoted, so `"Clientes"` was read back as `clientes`: the grammar offered another
-  table's columns, and drift in `"Clientes"` read `holds`. Names are quoted identifiers
+  unquoted, so `"Customers"` was read back as `customers`: the grammar offered another
+  table's columns, and drift in `"Customers"` read `holds`. Names are quoted identifiers
   now; lower-case names come out as before.
 * **GG-04: `catalog_tables()` is ordered** by schema and name. `ORDER BY 1` inside an
   aggregate orders by a constant, so the list followed pg_class's physical order and
