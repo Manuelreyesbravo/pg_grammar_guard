@@ -2,7 +2,7 @@
    "name": "pg_grammar_guard",
    "abstract": "Compile a token-level grammar from your live catalog, and watch it for drift",
    "description": "pg_grammar_guard compiles a GBNF grammar from the identifiers in your live catalog, so a constrained language model cannot emit a table, column or value that doesn't exist. Approve a grammar once and it reports when the schema has drifted away from it. Pure SQL, no shared library.",
-   "version": "0.4.6",
+   "version": "0.4.7",
    "maintainer": [
       "Manuel Reyes <manuelreyesbravo@gmail.com>"
    ],
@@ -12,14 +12,14 @@
          "abstract": "Generate a grammar from the live catalog and detect when it drifts",
          "file": "pg_grammar_guard--0.4.1.sql",
          "docfile": "README.md",
-         "version": "0.4.6"
+         "version": "0.4.7"
       }
    },
    "prereqs": {
       "runtime": {
          "requires": {
             "PostgreSQL": "11.0.0",
-            "pg_living_assertions": "0.2.0"
+            "pg_living_assertions": "0.5.8"
          }
       }
    },

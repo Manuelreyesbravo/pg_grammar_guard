@@ -25,6 +25,11 @@ EXT=$DATA/ext
 enlazar() {
     rm -rf "$EXT" && mkdir -p "$EXT/extension"
     ln -s "$RAIZ"/pg_grammar_guard.control "$RAIZ"/pg_grammar_guard--*.sql "$EXT/extension/"
+    # pg_living_assertions from a checkout, ahead of the installed one, when LIVING_ASSERTIONS_DIR
+    # names one: what this extension runs its watches through is part of what is tested.
+    if [ -n "${LIVING_ASSERTIONS_DIR:-}" ]; then
+        ln -s "$LIVING_ASSERTIONS_DIR"/pg_living_assertions.control "$LIVING_ASSERTIONS_DIR"/pg_living_assertions--*.sql "$EXT/extension/"
+    fi
 }
 
 # The harness must be able to say it is testing the wrong thing.

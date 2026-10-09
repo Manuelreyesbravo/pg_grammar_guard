@@ -296,7 +296,20 @@ usually the one where installing a C extension is hardest to get approved.
 Every function sets its own `search_path`. Not style: the extension installs into
 its own schema, so an unqualified reference would resolve through the *caller's*
 `search_path` — which fails at runtime for anyone who has not added the schema,
-and lets a caller decide which `md5` the fingerprint uses.
+and lets a caller decide which `md5` the fingerprint uses. Since 0.4.7 that path
+starts with `pg_catalog`.
+
+**Create the `grammar_guard` schema yourself, or let the extension create it.**
+Since 0.4.7 `CREATE EXTENSION` refuses a `grammar_guard` schema owned by a role
+that is neither the installer nor a superuser. Until 0.4.6 it used one silently,
+and its owner could define, say, `to_json(text)` there and have it run with the
+rights of whoever called the extension -- a superuser, in the external audit.
+Path order alone does not stop that: PostgreSQL picks the best-matching overload
+whatever schema it lives in.
+
+A watch runs as the role that declared it, through pg_living_assertions 0.5.8:
+a role you let call `watch()` can make a check read only what it can read
+itself, not what the role running `check_grammar()` can.
 
 ## Measured
 

@@ -16,7 +16,8 @@ DATA         = pg_grammar_guard--0.1.0.sql \
                pg_grammar_guard--0.4.2--0.4.3.sql \
                pg_grammar_guard--0.4.3--0.4.4.sql \
                pg_grammar_guard--0.4.4--0.4.5.sql \
-               pg_grammar_guard--0.4.5--0.4.6.sql
+               pg_grammar_guard--0.4.5--0.4.6.sql \
+               pg_grammar_guard--0.4.6--0.4.7.sql
 PG_CONFIG   ?= pg_config
 
 # One installcheck, no dependencies -- the same lesson pg_promise_guard took
@@ -32,11 +33,16 @@ REGRESS_OPTS = --inputdir=test --outputdir=test
 check-pgtemp:
 	@PG_CONFIG=$(PG_CONFIG) bash ./test/pg_temp.sh
 
+# The findings of the external audit of 0.4.5, each against its control.
+.PHONY: check-audit
+check-audit:
+	@PG_CONFIG=$(PG_CONFIG) bash ./test/audit.sh
+
 # Every suite in SUITES, in a throwaway cluster built from PG_CONFIG's binaries and
 # stopped afterwards, whatever the suites answered. PostgreSQL 18 or later: the
 # cluster loads this checkout through extension_control_path. CI runs exactly
 # this on 18 and 19.
-SUITES = check-pgtemp
+SUITES = check-pgtemp check-audit
 .PHONY: check-suites
 check-suites:
 	@PG_CONFIG=$(PG_CONFIG) bash ./test/cluster.sh init

@@ -4,6 +4,30 @@ Versions are released on [PGXN](https://pgxn.org/dist/pg_grammar_guard/). Each
 upgrade script (`pg_grammar_guard--OLD--NEW.sql`) documents, in its own header,
 exactly what changed and why; that is the authoritative per-version record.
 
+## 0.4.7 -- 2026-10-09
+
+From an external audit of 0.4.5, each finding measured on 0.4.6 before it was changed
+(`test/audit.sh`, `make check-audit`, in `make check-suites`: every tooth red on 0.4.6
+with its control green).
+
+* **GG-01: a `grammar_guard` schema someone else created is refused.** `CREATE EXTENSION`
+  used it silently, and its owner's `to_json(text)` ran in place of `pg_catalog`'s as
+  whoever called -- a superuser, measured. The install refuses a schema owned by a role
+  that is neither the installer nor a superuser, and every function searches
+  `pg_catalog` first.
+* **GG-02: a table with capitals is its own table.** `catalog_tables()` returned names
+  unquoted, so `"Clientes"` was read back as `clientes`: the grammar offered another
+  table's columns, and drift in `"Clientes"` read `holds`. Names are quoted identifiers
+  now; lower-case names come out as before.
+* **GG-04: `catalog_tables()` is ordered** by schema and name. `ORDER BY 1` inside an
+  aggregate orders by a constant, so the list followed pg_class's physical order and
+  churn or a restore read as drift. **A watch approved over `catalog_tables()` may read
+  `broken` once after the upgrade**, if it was approved with another order; the upgrade
+  names those watches. Re-approve the ones that do.
+* **GG-03: a watch runs as the role that declared it**, through pg_living_assertions
+  0.5.8, which this version requires (the tooth is red against 0.5.7).
+* `test/cluster.sh` loads pg_living_assertions from `LIVING_ASSERTIONS_DIR` when set.
+
 ## 0.4.6 -- 2026-10-08
 
 * **Metadata only.** The PGXN description is two sentences now; the longer
