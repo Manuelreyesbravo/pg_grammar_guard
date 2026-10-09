@@ -4,7 +4,13 @@ Versions are released on [PGXN](https://pgxn.org/dist/pg_grammar_guard/). Each
 upgrade script (`pg_grammar_guard--OLD--NEW.sql`) documents, in its own header,
 exactly what changed and why; that is the authoritative per-version record.
 
-## 0.4.5 -- unreleased
+## 0.4.6 -- 2026-10-08
+
+* **Metadata only.** The PGXN description is two sentences now; the longer
+  explanation it carried is in this README. No code changed: the upgrade
+  script 0.4.5 -> 0.4.6 changes no object.
+
+## 0.4.5 -- 2026-10-08
 
 * **A temporary table of the session that evaluates a grammar can no longer hide
   that the catalog drifted.** `catalog_columns()`, `catalog_tables()` and
