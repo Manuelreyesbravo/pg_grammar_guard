@@ -4,6 +4,11 @@ Versions are released on [PGXN](https://pgxn.org/dist/pg_grammar_guard/). Each
 upgrade script (`pg_grammar_guard--OLD--NEW.sql`) documents, in its own header,
 exactly what changed and why; that is the authoritative per-version record.
 
+## 0.4.9 -- 2026-10-09
+
+No behavior change; names inside function bodies are English. The internal `_reglas()` and
+`_correlacionado()` are `_rules()` and `_correlated()`; the generated grammars are byte-identical.
+
 ## 0.4.8 -- 2026-10-09
 
 The Medium and Low findings of the external audit of 0.4.5 left open, each measured on 0.4.7
