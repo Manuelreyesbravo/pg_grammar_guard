@@ -7,7 +7,7 @@ cannot name a table, a column or a value that does not exist — and tells you w
 a grammar you approved stopped describing your database.
 
 ```sql
-CREATE EXTENSION pg_grammar_guard;
+CREATE EXTENSION pg_grammar_guard CASCADE;   -- CASCADE: it needs pg_living_assertions
 
 SELECT grammar_guard.grammar_for_json(ARRAY[
     ROW('table',  'enum', grammar_guard.catalog_tables(ARRAY['app']), true),
@@ -23,9 +23,10 @@ f3-limit ::= integer
 ...
 ```
 
-Feed that to `llama.cpp` (`grammar`), or to anything built on llguidance or
-XGrammar. The model is now **unable** to emit `app.customers.email` when there is
-no such column. Not corrected afterwards — unable.
+Feed that to `llama.cpp` (`grammar`), or to another sampler that reads GBNF. The
+model is now **unable** to emit `app.customers.email` when there is no such column.
+Not corrected afterwards — unable. (`bench/grammar_check.sh` runs this grammar
+through llama.cpp's GBNF parser: a `tax_id` is accepted, an `email` refused.)
 
 ## The failure it exists for
 
@@ -73,32 +74,35 @@ SELECT grammar_guard.grammar_for('[
 ]'::jsonb);
 ```
 
-Asked to *"drop every table in production"*, a 35B constrained by that grammar
-answered:
+Whatever a model constrained by that grammar is asked -- *"drop every table in
+production"*, say -- what it can emit looks like this:
 
 ```json
 {"action":"select","columns":["id","id","id"],"filter":{"column":"id","op":"="}}
 ```
 
-It could not say `drop`, because `drop` is not in the enum.
+It cannot say `drop`, because `drop` is not in the enum, nor list a fourth column.
+`bench/grammar_check.sh` checks all three against llama.cpp's GBNF parser: the line
+above is accepted, an `"action":"drop"` and a four-item `columns` are refused.
 
 **Arrays are always bounded, and that is not a detail.** An unbounded `( ... )*`
-is a loop waiting to happen. The first version of this feature had one, and the
-same model emitted `["id","id","id", …]` **forty-one times** until it ran out of
-budget — every single token legal under the grammar.
+is a loop waiting to happen. The first version of this feature had one, and a
+model emitted `["id","id","id", …]` over and over until it ran out of budget —
+every single token legal under the grammar.
 
 That is the worst failure a grammar can have, because **it does not fail**. A
 model stuck in a legal loop looks exactly like a model working: no error, no
 invalid output, just tokens.
 
-The bounds are **measured, not chosen**. Over 721 real array arguments taken from
-a working system: 95th percentile **9** items, largest **84**, and — the part
-that mattered — a real minimum of **zero**. So `max_items` defaults to 32 and
-`min_items` to 1, both overridable. The first draft capped at 16 and required at
-least one element: it would have silently truncated that 84 and made a legitimate
-empty list unreachable. **A cap that truncates real work gets worked around
-instead of used** — the same failure as the unbounded array, in the other
-direction.
+The bounds came from looking at real array arguments of a working system (a
+private log, not published, so not reproducible from this repo): most were short,
+a few were several times longer than 16 items, and some were legitimately
+**empty**. So `max_items` defaults to 32 and `min_items` to 1, both overridable,
+and a field that may be empty should say `"min_items": 0`. The first draft capped
+at 16 and required at least one element: it would have silently truncated the long
+ones and made a legitimate empty list unreachable. **A cap that truncates real work
+gets worked around instead of used** — the same failure as the unbounded array, in
+the other direction.
 
 A cap still has to exist, and the trade is deliberate: **truncating is far less
 bad than never stopping**, because a short array is still valid, closed JSON that
@@ -121,11 +125,11 @@ something the catalog knows *in full*, right now:
 | **closed** | table names · the columns of a given table · an enum's labels · the argument names of a known function | **the grammar** |
 | **open** | file paths · shell commands · free text · arbitrary SQL | **your validator**, always |
 
-Enumerating an open set looks like it works and quietly caps out. Measured on a
-real workload of 1.024 operations over 165 distinct file paths: a window of the
-last 12 paths covers 68% of them, and **no window size ever reaches 100%** — the
-curve saturates at 83,9%, which is exactly the share of paths being seen for the
-first time. Any system that is actually working keeps creating new ones.
+Enumerating an open set looks like it works and quietly caps out. On a private log
+of file operations (not published), an enumeration of the paths seen so far never
+covered all of the next ones, however large the window: the share it missed was
+the share of paths being seen for the first time. Any system that is actually
+working keeps creating new ones.
 
 So the rule is not "enumerate more". It is: **enumerate what is complete, validate
 what is not.** A grammar built over an open set does not fail loudly — it makes
@@ -208,14 +212,16 @@ root-v1-d0 ::= "\"id\"" | "\"customer_id\"" | "\"amount\""
 ```
 
 One alternative per table, so the legal columns are chosen by the token the model
-**already emitted**. Asked point blank for a column that exists in the database
-but not in that table, a local 35B could not produce it:
+**already emitted**. A column that exists in the database but not in that table is
+not a legal continuation, so a constrained model cannot produce it, however it is
+asked. `bench/grammar_check.sh` shows it with llama.cpp's GBNF parser over a
+generated schema:
 
-| asked for | emitted |
-|---|---|
-| `path` from `public.projects` | `{"table":"public.projects","column":"path"}` |
-| **`db_connection` from `public.nodes`** — it is a column of `projects` | `{"table":"public.nodes","column":"id"}` |
-| `invented_xyz` from `public.projects` | `{"table":"public.projects","column":"id"}` |
+| input | flat grammar | correlated grammar |
+|---|---|---|
+| a column of the chosen table | accepted | accepted |
+| **a column of another table** | accepted | **refused** |
+| a column that exists nowhere | refused | refused |
 
 Only **one** field per object may carry dependents. Two would need an alternative
 per *combination*, which is the exponential blowup people expect here — it is
@@ -225,27 +231,27 @@ model can enter it and then have no legal token left.
 
 ## Where it runs, and how big it gets
 
-`gbnf` is not a llama.cpp-only format. **XGrammar** — the default structured
-generation backend of **vLLM**, **SGLang**, **TensorRT-LLM** and **MLC-LLM** —
-follows the same GBNF specification. Checked rather than assumed: every grammar
-in this README, plus a real 81-relation catalog, compiles under
-`xgrammar.Grammar.from_ebnf` (**5/5**) and under llama.cpp.
+`gbnf` is the grammar format of llama.cpp, and the grammars here are checked
+against its parser (`bench/grammar_check.sh`). XGrammar, the structured-generation
+backend of vLLM and SGLang among others, documents support for the same format; that
+is not checked in this repo.
 
-Size, measured on that same real catalog (81 relations, 410 distinct columns):
+Size, measured with `bench/grammar_check.sh` over a generated schema (each table has
+`id`, `created_at` and four columns of its own; results and machine in
+`bench/results.md`):
 
-| | bytes |
-|---|---|
-| flat: table enum + column enum | **10.9 KB** |
-| correlated: columns depend on the chosen table | **22.2 KB** |
+| schema | flat: table enum + column enum | correlated: columns depend on the table |
+|---|---|---|
+| 81 tables, 326 distinct columns, 486 pairs | 7.9 KB | 18.1 KB |
+| 200 tables, 802 distinct columns, 1,200 pairs | 19.4 KB | 44.6 KB |
 
-So a correlated grammar costs about **2×** the flat one, and stays linear in the
-number of (table, column) pairs rather than exploding. But it does grow: at this
-rate a **200-relation schema lands near 55 KB**, which is a lot to hand a sampler
-on every request.
+So a correlated grammar costs about **2.3×** the flat one, and grows with the number
+of (table, column) pairs rather than exploding. But it does grow, and a grammar of
+tens of kilobytes is a lot to hand a sampler on every request.
 
 **Constrain a subset, not the whole catalog.** Pass the tables the request could
 plausibly touch. That is not a workaround for a limitation — a grammar listing
-every table in the database is the 45k-token tool schema all over again, and the
+every table in the database is the oversized tool schema all over again, and the
 whole point here is to hand the model a small true world instead of a big one.
 
 ## Dialects
@@ -266,9 +272,13 @@ compiled into something subtly wrong.
 
 ## Tested on
 
-Measured on 2026-09-16, not assumed: `make installcheck` was run against each
-of these releases, every one in a container of the official image for that
-version (19beta2 is a local build).
+0.4.9 was measured on 2026-11-12, not assumed, on local builds of PostgreSQL 11.22,
+12.22, 13.23, 14.24, 15.19, 16.15, 17.11, 18.6 and 19rc1: `make installcheck` and
+`ci/upgrade_check.sh` from every earlier release on each, and `make check-suites`
+(`check-pgtemp`, `check-audit`) on 18 and 19. All green. The installcheck also passes
+with pg_living_assertions 0.5.6, the oldest version this extension accepts (on 11
+and 19). The CI in `.github/workflows` runs installcheck and the upgrade check on 11
+to 19.
 
 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17 | 18 | 19 |
 |:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|
@@ -284,14 +294,36 @@ requires 11.
 
 ## Install
 
+It needs **pg_living_assertions 0.5.6 or later** (0.5.10 recommended) installed in
+the same PostgreSQL; `make install` here does not install it. From PGXN:
+
 ```
-make install
-psql -c 'CREATE EXTENSION pg_grammar_guard'
+pgxn install pg_living_assertions
+pgxn install pg_grammar_guard
+psql -c 'CREATE EXTENSION pg_grammar_guard CASCADE'
 ```
 
-Pure SQL. No shared library, no dependencies, and it reads only the catalogs —
-because the database that most needs a grammar built from its real schema is
-usually the one where installing a C extension is hardest to get approved.
+From source, with pg_living_assertions already installed (`make install` in its
+checkout):
+
+```
+make install
+psql -c 'CREATE EXTENSION pg_grammar_guard CASCADE'
+make installcheck   # against the server your PG* variables point at
+```
+
+`CASCADE` creates pg_living_assertions in the database if it is not there yet;
+without it, `CREATE EXTENSION` stops with `required extension
+"pg_living_assertions" is not installed`.
+
+Pure SQL. No shared library, and it reads only the catalogs — because the
+database that most needs a grammar built from its real schema is usually the one
+where installing a C extension is hardest to get approved.
+
+**Privileges.** Every function is executable by `PUBLIC`: they only read the
+catalog and return text, so a role learns nothing it could not read from
+`pg_catalog` itself. `watch()` writes through `pg_living_assertions.declare()`,
+and so only for a role you granted that to.
 
 Every function sets its own `search_path`. Not style: the extension installs into
 its own schema, so an unqualified reference would resolve through the *caller's*
@@ -312,30 +344,12 @@ author's `search_path`, recorded with the assertion and applied with `pg_temp`
 last -- at approval too, so a temporary table of the approving session is not what
 gets approved. Qualifying names in a spec is still the robust way to write one.
 
-A watch runs as the role that declared it, through pg_living_assertions 0.5.8:
-a role you let call `watch()` can make a check read only what it can read
-itself, not what the role running `check_grammar()` can.
+A watch runs as the role that declared it with pg_living_assertions 0.5.8 or
+later: a role you let call `watch()` can make a check read only what it can read
+itself, not what the role running `check_grammar()` can. On 0.5.6 and 0.5.7 a check
+still runs as whoever runs it, which is one reason to install 0.5.10.
 
-## Measured
-
-Against a local 35B (`llama.cpp`), eight prompts written to tempt the model into
-naming things that do not exist — a `deploy` capability, a `zently` project, a
-`terraform apply`:
-
-| | valid output |
-|---|---|
-| with the generated grammar | **8/8** |
-| without it (control) | **0/8** |
-
-The control is the part that matters: without it, a grammar that did nothing at
-all would have scored the same 8/8 on easy prompts. Unconstrained, the model
-returned fenced markdown, a project description, and a bash command.
-
-And consistent with the section above: constrained, it answered "deploy to
-production" with a real capability that was the **wrong** one. Well formed,
-wrong. That is the boundary of what a grammar buys.
-
-## Licence
+## License
 
 Apache License 2.0 -- see [LICENSE](LICENSE). Copyright 2026 Manuel Reyes Bravo.
 

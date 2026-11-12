@@ -4,7 +4,7 @@
    "description": "pg_grammar_guard compiles a GBNF grammar from the identifiers in your live catalog, so a constrained language model cannot emit a table, column or value that doesn't exist. Approve a grammar once and it reports when the schema has drifted away from it. Pure SQL, no shared library.",
    "version": "0.4.9",
    "maintainer": [
-      "Manuel Reyes <manuelreyesbravo@gmail.com>"
+      "Manuel Reyes Bravo <manuelreyesbravo@gmail.com>"
    ],
    "license": "apache_2_0",
    "provides": {
@@ -19,7 +19,7 @@
       "runtime": {
          "requires": {
             "PostgreSQL": "11.0.0",
-            "pg_living_assertions": "0.5.9"
+            "pg_living_assertions": "0.5.6"
          }
       }
    },
@@ -33,7 +33,7 @@
          "type": "git"
       }
    },
-   "generated_by": "Manuel Reyes",
+   "generated_by": "Manuel Reyes Bravo",
    "meta-spec": {
       "version": "1.0.0",
       "url": "https://pgxn.org/meta/spec.txt"
