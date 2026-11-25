@@ -272,13 +272,17 @@ compiled into something subtly wrong.
 
 ## Tested on
 
-0.4.9 was measured on 2026-11-12, not assumed, on local builds of PostgreSQL 11.22,
-12.22, 13.23, 14.24, 15.19, 16.15, 17.11, 18.6 and 19rc1: `make installcheck` and
-`ci/upgrade_check.sh` from every earlier release on each, and `make check-suites`
-(`check-pgtemp`, `check-audit`) on 18 and 19. All green. The installcheck also passes
-with pg_living_assertions 0.5.6, the oldest version this extension accepts (on 11
-and 19). The CI in `.github/workflows` runs installcheck and the upgrade check on 11
-to 19.
+0.4.10 has the objects of 0.4.9, unchanged. Those were tested by the CI on 2026-11-23
+([run 45238642784](https://github.com/Manuelreyesbravo/pg_grammar_guard/actions/runs/45238642784))
+on PostgreSQL 11.22, 12.22, 13.23, 14.25, 15.20, 16.16, 17.12, 18.7 and 19.0, the first
+release of 19: `make installcheck` and `ci/upgrade_check.sh` from every release on PGXN
+on each, and `make check-suites` (`check-pgtemp`, `check-audit`) on 18 and 19, with
+pg_living_assertions from PGXN. All green. The CI in `.github/workflows` runs the same on
+every push and every Monday.
+
+Before that, 0.4.9 was measured on 2026-11-12 on local builds of PostgreSQL 11.22 to 18.6
+and 19rc1; the installcheck also passed with pg_living_assertions 0.5.6, the oldest version
+this extension accepts (on 11 and 19).
 
 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17 | 18 | 19 |
 |:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|

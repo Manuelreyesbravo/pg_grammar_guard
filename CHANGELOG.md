@@ -4,6 +4,10 @@ Versions are released on [PGXN](https://pgxn.org/dist/pg_grammar_guard/). Each
 upgrade script (`pg_grammar_guard--OLD--NEW.sql`) documents, in its own header,
 exactly what changed and why; that is the authoritative per-version record.
 
+## 0.4.10 -- 2026-11-25
+
+Documentation only; no object changes (`ALTER EXTENSION pg_grammar_guard UPDATE` moves the version and nothing else). Tested on is restated for PostgreSQL 19.0 (released 2026-11-19) and the current minor releases, from the CI run of 2026-11-23.
+
 ## 0.4.9 -- 2026-10-09
 
 No behavior change; names inside function bodies are English. The internal `_reglas()` and
